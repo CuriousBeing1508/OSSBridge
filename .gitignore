@@ -1,0 +1,31 @@
+# Data and generated outputs (dataset lives outside the repo, see README)
+data/
+temp_coverage/
+DataFromNeo4j/
+ErrorLog/
+output/
+*.log
+analysis_log.txt
+
+# Build artifacts
+target/
+*.jar
+*.class
+node_modules/
+build/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Local config and editor files
+.env
+.idea/
+.vscode/
+*.iml
+.DS_Store
+~$*

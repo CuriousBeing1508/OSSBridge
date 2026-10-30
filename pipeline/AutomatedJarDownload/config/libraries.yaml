@@ -1,0 +1,19 @@
+libraries:
+
+
+  - name: commons-codec
+    version: 1.17.1
+    github_owner: apache
+    github_repo: jcommons-codec
+
+  # - name: jackson-databind
+  #   version: 2.12.7.2
+  #   github_owner: FasterXML
+  #   github_repo: jackson-databind
+    
+  # - name: jackson-databind
+  #   version: 2.15.0
+  #   github_owner: FasterXML
+  #   github_repo: jackson-databind
+
+# Add more as needed

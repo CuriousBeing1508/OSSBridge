@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ossbridge-backend
+    ports:
+      - "5050:5050"
+    environment:
+      - NODE_ENV=production
+      - PORT=5050
+      - DATASET_PATH=/data/dataset
+    volumes:
+      - ${DATASET_PATH}:/data/dataset:ro
+    restart: unless-stopped
+    networks:
+      - ossbridge-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ossbridge-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - ossbridge-network
+
+networks:
+  ossbridge-network:
+    driver: bridge

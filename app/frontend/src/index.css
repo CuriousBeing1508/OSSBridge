@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* === Layer the bridge image beneath the gradient === */
+.bridge-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("./assets/ChatGPTOSSBridge.png");
+  background-repeat: no-repeat;
+  background-position: bottom center;
+  background-size: contain;
+  opacity: 0.4; /* makes it faded */
+  z-index: 0;
+}
+
+
+/* === Layer the bridge image beneath the gradient === */
+.bridge-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("./assets/ChatGPTOSSBridge.png");
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: cover;
+  opacity: 0.6;
+  z-index: 0;
+}
+
+
+/* smooth fade-in animation for content */
+/* @keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+} */
+
+/* .animate-fadeIn {
+  animation: fadeIn 1.2s ease-out forwards;
+} */
+
+
