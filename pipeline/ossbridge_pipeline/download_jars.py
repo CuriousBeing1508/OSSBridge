@@ -16,7 +16,9 @@ Each dependent gets one status, written to a status CSV:
 
 Jars are written to a temporary file and checked before they are renamed, so a
 partial download never looks like a finished jar. Existing invalid jars are
-downloaded again.
+downloaded again. The SHA-256 of every jar is recorded, so a jar can be deleted
+after analysis and later downloaded again and checked to be the same file
+(releases on Maven Central cannot be changed).
 
 USAGE:
     python -m ossbridge_pipeline.download_jars \
@@ -27,6 +29,7 @@ USAGE:
 
 import argparse
 import csv
+import hashlib
 import os
 import sys
 import threading
@@ -41,7 +44,7 @@ from urllib3.util.retry import Retry
 
 from .coords import MAVEN_CENTRAL, jar_file_name, jar_url, parse_release
 
-STATUS_COLUMNS = ["release_id", "file", "status", "bytes", "detail"]
+STATUS_COLUMNS = ["release_id", "file", "status", "bytes", "sha256", "detail"]
 TIMEOUT = (10, 120)  # connect, read (seconds)
 CHUNK = 1 << 16
 
@@ -71,24 +74,34 @@ def inspect_jar(path):
     return "ok" if any(n.endswith(".class") for n in names) else "no_classes"
 
 
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def download_one(release_id, out_dir, base_url=MAVEN_CENTRAL):
     try:
         group, artifact, version = parse_release(release_id)
     except ValueError as e:
-        return {"release_id": release_id, "file": "", "status": "failed", "bytes": 0, "detail": str(e)}
+        return {"release_id": release_id, "file": "", "status": "failed", "bytes": 0, "sha256": "",
+                "detail": str(e)}
 
     name = jar_file_name(group, artifact, version)
     dest = Path(out_dir) / name
-    result = {"release_id": release_id, "file": name, "bytes": 0, "detail": ""}
+    result = {"release_id": release_id, "file": name, "bytes": 0, "sha256": "", "detail": ""}
 
     if dest.exists():
         kind = inspect_jar(dest)
         if kind is not None:
             return dict(result, status="present" if kind == "ok" else "no_classes",
-                        bytes=dest.stat().st_size)
+                        bytes=dest.stat().st_size, sha256=sha256_of(dest))
 
     url = jar_url(group, artifact, version, base_url)
     part = dest.with_name(dest.name + ".part")
+    digest = hashlib.sha256()
     try:
         with session().get(url, stream=True, timeout=TIMEOUT) as resp:
             if resp.status_code == 404:
@@ -98,6 +111,7 @@ def download_one(release_id, out_dir, base_url=MAVEN_CENTRAL):
             with open(part, "wb") as f:
                 for chunk in resp.iter_content(CHUNK):
                     f.write(chunk)
+                    digest.update(chunk)
     except requests.RequestException as e:
         part.unlink(missing_ok=True)
         return dict(result, status="failed", detail=f"{type(e).__name__}: {e}")
@@ -107,7 +121,8 @@ def download_one(release_id, out_dir, base_url=MAVEN_CENTRAL):
         part.unlink(missing_ok=True)
         return dict(result, status="failed", detail=f"not a valid jar: {url}")
     os.replace(part, dest)
-    return dict(result, status="downloaded" if kind == "ok" else "no_classes", bytes=dest.stat().st_size)
+    return dict(result, status="downloaded" if kind == "ok" else "no_classes", bytes=dest.stat().st_size,
+                sha256=digest.hexdigest())
 
 
 def read_release_ids(dependents_csv):
@@ -116,14 +131,13 @@ def read_release_ids(dependents_csv):
     return list(dict.fromkeys(ids))  # dedupe, keep order
 
 
-def download_dependent_jars(dependents_csv, out_dir, status_csv, workers=4,
-                            base_url=MAVEN_CENTRAL, progress=None):
-    """Download all dependent jars; returns counts per status.
+def download_releases(release_ids, out_dir, workers=4, base_url=MAVEN_CENTRAL, progress=None):
+    """Download the jars of the given releases; returns one result per release, in input order.
 
-    progress(done, total, result) is called after each dependent, e.g. to
-    update a job's status.
+    progress(done, total, result) is called after each release, e.g. to update a
+    job's status.
     """
-    release_ids = read_release_ids(dependents_csv)
+    release_ids = list(dict.fromkeys(release_ids))
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +151,10 @@ def download_dependent_jars(dependents_csv, out_dir, status_csv, workers=4,
 
     order = {rid: i for i, rid in enumerate(release_ids)}
     results.sort(key=lambda r: order[r["release_id"]])
+    return results
+
+
+def write_status(status_csv, results):
     status_csv = Path(status_csv)
     status_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(status_csv, "w", newline="", encoding="utf-8") as f:
@@ -144,9 +162,28 @@ def download_dependent_jars(dependents_csv, out_dir, status_csv, workers=4,
         writer.writeheader()
         writer.writerows(results)
 
+
+def count_statuses(results):
     counts = Counter(r["status"] for r in results)
     return {"total": len(results), **{s: counts.get(s, 0) for s in
                                       ("downloaded", "present", "no_classes", "not_found", "failed")}}
+
+
+def download_dependent_jars(dependents_csv, out_dir, status_csv, workers=4,
+                            base_url=MAVEN_CENTRAL, progress=None):
+    """Download all dependent jars listed in a CSV; returns counts per status."""
+    results = download_releases(read_release_ids(dependents_csv), out_dir, workers, base_url, progress)
+    write_status(status_csv, results)
+    return count_statuses(results)
+
+
+def download_library_jar(workspace, base_url=MAVEN_CENTRAL):
+    """Download the library's own jar into the workspace; returns its path."""
+    workspace.dir.mkdir(parents=True, exist_ok=True)
+    result = download_one(f"{workspace.library_ga}:{workspace.version}", workspace.dir, base_url)
+    if result["status"] not in ("downloaded", "present"):
+        raise RuntimeError(f"Library jar not available ({result['status']}): {result['detail']}")
+    return workspace.library_jar
 
 
 def run(workspace, workers=4, base_url=MAVEN_CENTRAL, progress=None):

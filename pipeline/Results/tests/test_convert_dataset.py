@@ -7,9 +7,10 @@ import duckdb
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import convert_dataset  # noqa: E402
-from result_tables import connect  # noqa: E402
+from ossbridge_pipeline.result_tables import connect  # noqa: E402
 
 GA = "org.example:lib"
 V = "1.0"

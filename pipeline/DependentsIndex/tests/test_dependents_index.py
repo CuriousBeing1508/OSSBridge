@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import build_index  # noqa: E402
 import select_dependents  # noqa: E402
+from ossbridge_pipeline.candidates import CANDIDATE_COLUMNS, random_order, rank_candidates  # noqa: E402
 
 LIB = "org.example:lib"
 
@@ -76,22 +77,21 @@ def test_include_test_scope(index):
     assert any(d["dependent_ga"] == "com.acme:tests-only" for d in deps)
 
 
-def test_tier_a_only_contains_dependents_with_reach(index):
+def test_only_dependents_with_reach_are_ranked_by_reach(index):
     out, _ = index
     _, deps = select_dependents.load_dependents(str(out), LIB, "1.0")
-    selected = select_dependents.select(deps, top_k=3, sample_size=10, seed=1)
-    tiers = {d["dependent_ga"]: d["tier"] for d in selected}
-    assert tiers["com.acme:core"] == "A"
-    assert [t for t in tiers.values()].count("A") == 1
-    assert len(selected) == 4
+    ranked = {d["dependent_ga"]: d for d in rank_candidates(deps, seed=1)}
+    assert ranked["com.acme:core"]["rank_reach"] == 1
+    assert [d["rank_reach"] for d in ranked.values()].count(None) == 3
+    assert sorted(d["rank_random"] for d in ranked.values()) == [1, 2, 3, 4]
 
 
-def test_stratified_sample_spreads_across_groups_and_is_seeded():
+def test_random_order_is_seeded_and_independent_of_input_order():
     deps = [{"dependent_ga": f"g{g}:a{i}", "reach": 0} for g in range(3) for i in range(5)]
-    first = select_dependents.stratified_sample(deps, 3, seed=7)
-    assert len({d["dependent_ga"].split(":")[0] for d in first}) == 3
-    assert first == select_dependents.stratified_sample(deps, 3, seed=7)
-    assert len(select_dependents.stratified_sample(deps, 100, seed=7)) == 15
+    first = random_order(deps, seed=7)
+    assert first == random_order(list(reversed(deps)), seed=7)
+    assert first != random_order(deps, seed=8)
+    assert sorted(d["dependent_ga"] for d in first) == sorted(d["dependent_ga"] for d in deps)
 
 
 def test_from_csv_parses_version_and_timestamp(tmp_path):
@@ -109,22 +109,23 @@ def test_from_csv_parses_version_and_timestamp(tmp_path):
     assert writer.rows["release_ts"] == [1713152911000]
 
 
-def test_cli_writes_csv_and_summary(index, tmp_path, monkeypatch):
+def test_cli_writes_candidates_and_summary(index, tmp_path, monkeypatch):
     out, _ = index
-    target = tmp_path / "sel" / "deps.csv"
+    target = tmp_path / "sel" / "candidates.csv"
     monkeypatch.setattr(sys, "argv", [
         "select_dependents.py", "--index", str(out), "--library", LIB,
-        "--version", "1.0", "--top-k", "1", "--sample", "2", "--out", str(target),
+        "--version", "1.0", "--out", str(target),
     ])
     select_dependents.main()
 
     rows = list(csv.DictReader(open(target)))
-    assert list(rows[0]) == select_dependents.OUTPUT_COLUMNS
+    assert list(rows[0]) == CANDIDATE_COLUMNS
     assert rows[0]["release_id"] == "com.acme:core:1.1"
-    assert rows[0]["tier"] == "A"
+    assert rows[0]["rank_reach"] == "1"
+    assert len(rows) == 4
     summary = json.loads(target.with_suffix(".summary.json").read_text())
-    assert summary["selected"] == 3
-    assert summary["reach_covered_pct"] == 100.0
+    assert summary["dependent_projects"] == 4
+    assert summary["ranked_by_reach"] == 1
 
 
 def test_validate_helpers(tmp_path):

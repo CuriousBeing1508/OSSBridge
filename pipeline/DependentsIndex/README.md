@@ -1,12 +1,12 @@
 # DependentsIndex
 
 Replaces the per-run Neo4j query (pipeline step 1) with a small Parquet index and
-impact-based selection of which dependents to analyze.
+a ranked list of dependents to analyze.
 
 | Script | What it does |
 |---|---|
 | `build_index.py` | Builds `edges.parquet`, `reach.parquet` and `manifest.json` from Goblin Neo4j (once) or from existing dependents CSVs |
-| `select_dependents.py` | Picks the dependents to analyze for one library version and writes a CSV that `mavenDepJarDownload.py` can read |
+| `select_dependents.py` | Writes the ranked candidate list (`candidates.csv`) for one library version; the collection loop (`ossbridge_pipeline/collect.py`) then picks the dependents that use the library |
 | `validate_sampling.py` | Compares API rankings from samples with a full analysis, to choose sample sizes |
 
 ## Setup
@@ -65,9 +65,10 @@ inside the exported libraries, so tier A is mostly empty for a CSV-built index.
 
 ```bash
 python select_dependents.py --index ../../data/dependents-index \
-    --library junit:junit --version 4.12 --top-k 200 --sample 200 \
-    --out ../../data/junit-4.12/dependents.csv
+    --library junit:junit --version 4.12
 ```
+
+Writes `candidates.csv` to the run folder `data/runs/junit__junit@4.12/` (or `--out`).
 
 For a library that is not in the index yet, add `--fetch-missing`: it runs
 `add-library` against Neo4j and retries. If Neo4j has no dependents either, it
@@ -78,26 +79,28 @@ no dependents).
 `edges.parquet` it needs (libraries added with `add-library` are only read from
 local indexes).
 
-Selection steps:
+Steps:
 1. All releases that depend on the library version
 2. Drop `test`-scoped dependencies
 3. Keep the latest release of each dependent project
-4. Tier A: top-K projects by `reach` (projects that depend on them), only where reach > 0
-5. Tier B: seeded random sample of the rest, round-robin across groupIds
+4. `rank_reach`: order by `reach` (projects that depend on them), highest first; only where reach > 0
+5. `rank_random`: seeded random order of all candidates
 
-The `.summary.json` next to the CSV records counts after each step and the share of total reach covered.
+The `.summary.json` next to the CSV records the counts after each step. Which candidates
+are actually analyzed is decided by the collection loop; see [../Readme.md](../Readme.md).
 
 ## Sampling validation
 
-Against the existing full runs (`--package` restricts to the target library's APIs):
+Against the existing full runs (`--package` restricts to the target library's APIs).
+Only projects that use the library are sampled, as in the collection loop:
 
-| Library | Projects | Sample | Top-20 overlap | Kendall τ (top-50) | APIs used by ≥1% found |
+| Library | Projects using it | Sample | Top-20 overlap | Kendall τ (top-50) | APIs used by ≥1% found |
 |---|---|---|---|---|---|
-| commons-codec 1.17.1 | 343 | 100 | 0.96 | 0.99 | 1.00 |
-| jackson-databind 2.17.2 | 1,634 | 200 | 0.86 | 0.67 | 0.98 |
-| jackson-databind 2.17.2 | 1,634 | 400 | 0.92 | 0.74 | 1.00 |
+| commons-codec 1.17.1 | 86 | 50 | 0.81 | 0.82 | 0.89 |
+| jackson-databind 2.17.2 | 959 | 200 | 0.83 | 0.76 | 0.86 |
+| jackson-databind 2.17.2 | 959 | 400 | 0.90 | 0.83 | 1.00 |
 
-Mean over 20 seeds, tier B sampling only.
+Mean over 20 seeds, random order (`rank_random`).
 
 ## Tests
 

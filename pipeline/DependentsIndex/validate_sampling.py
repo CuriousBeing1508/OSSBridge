@@ -9,9 +9,10 @@ analyzing all of them, using existing full usage-analysis results
 (StaticAnaResults/<lib>-<version>/Dependents/*_third_party_calls.csv).
 
 For each analyzed project (latest analyzed release per groupId:artifactId),
-an API's popularity is the number of projects that call it. The ranking from
-the full set is compared with rankings from stratified samples of several
-sizes, over several seeds:
+an API's popularity is the number of projects that call it. Only projects that
+use the library are sampled, as in the collection loop, which keeps only those.
+The ranking from all of them is compared with rankings from random samples of
+several sizes, over several seeds:
     top-20 overlap   share of the full top-20 APIs found in the sample top-20
     kendall tau      rank agreement on the full top-50 APIs
     found >=1%       share of APIs used by >=1% of projects that the sample finds
@@ -32,7 +33,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from select_dependents import stratified_sample
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ossbridge_pipeline.candidates import random_order  # noqa: E402
 
 SUFFIX = "_third_party_calls.csv"
 
@@ -118,9 +121,10 @@ def main():
     projects, unmatched = load_projects(args.dependents_dir, args.dependents_csv, args.package)
     if not projects:
         sys.exit("No analysis files matched the dependents CSV")
+    projects = {ga: apis for ga, apis in projects.items() if apis}   # projects that use the library
     full = ranking(projects.values())
     deps = [{"dependent_ga": ga} for ga in sorted(projects)]
-    print(f"Projects analyzed: {len(projects)} (unmatched files: {unmatched}), APIs used: {len(full)}")
+    print(f"Projects using the library: {len(projects)} (unmatched files: {unmatched}), APIs used: {len(full)}")
     print(f"{'sample':>7} {'top20 overlap':>14} {'kendall tau':>12} {'found >=1%':>11}   (mean ± sd over {args.seeds} seeds)")
 
     results = []
@@ -129,7 +133,7 @@ def main():
             break
         runs = []
         for seed in range(args.seeds):
-            picked = stratified_sample(deps, size, seed)
+            picked = random_order(deps, seed)[:size]
             runs.append(compare(full, ranking(projects[d["dependent_ga"]] for d in picked), len(projects)))
         row = {"sample": size}
         for metric in runs[0]:

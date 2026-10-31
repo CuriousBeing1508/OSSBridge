@@ -1,4 +1,5 @@
 duckdb==2.0.0
+huggingface_hub==2.4.0
 neo4j==5.28.8
 pyarrow==26.0.0
 pytest==9.2.0

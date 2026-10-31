@@ -4,7 +4,8 @@
 Dataset → Result Tables Converter
 ================================================================================
 
-Converts the file-based OSSBridge dataset into result tables (schema.py).
+Converts the file-based OSSBridge dataset into result tables
+(ossbridge_pipeline/result_tables.py).
 The dataset is only read, never modified.
 
 INPUT (dataset folder, per library version):
@@ -43,7 +44,9 @@ from pathlib import Path
 
 import duckdb
 
-from result_tables import write_run, write_table
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ossbridge_pipeline.result_tables import write_run, write_table  # noqa: E402
 
 USAGE_SUFFIX = "_third_party_calls.csv"
 
