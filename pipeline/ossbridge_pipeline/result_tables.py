@@ -137,6 +137,28 @@ def write_table(results_dir, table, library_ga, version, rows):
     return out
 
 
+def conform(results_dir):
+    """Rewrite files written with an older schema to the current one (new columns as nulls).
+
+    All files of a table must have the same columns, e.g. for the Hugging Face dataset viewer.
+    Returns the files that were rewritten.
+    """
+    rewritten = []
+    for table, schema in TABLES.items():
+        for path in sorted((Path(results_dir) / table).glob("*.parquet")):
+            if pq.read_schema(path).names == schema.names:
+                continue
+            rows = pq.read_table(path)
+            for field in schema:
+                if field.name not in rows.column_names:
+                    rows = rows.append_column(field.name, pa.nulls(rows.num_rows, field.type))
+            tmp = path.with_suffix(".tmp")
+            pq.write_table(rows.select(schema.names).cast(schema), tmp)
+            os.replace(tmp, path)
+            rewritten.append(path)
+    return rewritten
+
+
 def delete_version(results_dir, library_ga, version):
     """Remove every table file of a library version (before writing a new run of it)."""
     for table in VERSION_TABLES:

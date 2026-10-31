@@ -399,6 +399,8 @@ def first_error(log_file):
         text = line.strip()
         if text.startswith("[ERROR]"):
             message = text[len("[ERROR]"):].strip()
+            if message.endswith(":"):        # a header such as "COMPILATION ERROR :"; the error follows
+                continue
             if message and not any(message.startswith(x) or x in message for x in IGNORED_ERROR_LINES):
                 return message[:300]
         if text == "* What went wrong:" and i + 1 < len(lines):      # Gradle
@@ -478,7 +480,31 @@ def test_counts(report_dirs):
 RELEASE_OVERRIDES = ["maven.compiler.source", "maven.compiler.target", "javac.src.version", "javac.target.version"]
 
 
-def build_commands(build_tool, project_root, module_dir, release, extra_test_modules=()):
+def jdk_profiles(project_root):
+    """Ids of Maven profiles that switch on by JDK version (<activation><jdk>).
+
+    They often add tests for newer Java features (e.g. jackson-databind 2.12's java14+
+    profile compiles tests with Java 14 preview features, which only JDK 14 accepts).
+    """
+    ids = []
+    for pom in project_poms(project_root):
+        try:
+            root = ET.parse(pom).getroot()
+        except ET.ParseError:
+            continue
+        for profile in root.iter():
+            if profile.tag.split("}")[-1] != "profile":
+                continue
+            children = {c.tag.split("}")[-1]: c for c in profile}
+            activation = children.get("activation")
+            if activation is not None and any(c.tag.split("}")[-1] == "jdk" for c in activation):
+                profile_id = (children["id"].text or "").strip() if "id" in children else ""
+                if profile_id and profile_id not in ids:
+                    ids.append(profile_id)
+    return ids
+
+
+def build_commands(build_tool, project_root, module_dir, release, extra_test_modules=(), disabled_profiles=()):
     """Build steps, and the folders of compiled classes and test reports.
 
     Each step is a list of alternative commands: the next one is run if the previous
@@ -491,6 +517,8 @@ def build_commands(build_tool, project_root, module_dir, release, extra_test_mod
         if not mvn:
             raise CoverageError("build_tool_missing", "Maven is not installed and the project has no mvnw")
         flags = list(MAVEN_FLAGS)
+        if disabled_profiles:
+            flags.append("-P" + ",".join(f"!{p}" for p in disabled_profiles))
         if release and release < 8:
             flags += [f"-D{p}=1.8" for p in RELEASE_OVERRIDES]
         modules = [module_dir, *extra_test_modules]
@@ -602,7 +630,7 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
                "repository": None, "tag": None, "module": None, "test_modules": [], "build_tool": None,
                "java_release": None,
                "jdk": None, "jdks_tried": [], "attempts": [], "tests": None, "jacoco": JACOCO_VERSION,
-               "detail": "", "hint": None}
+               "detail": "", "hint": None, "disabled_profiles": []}
     workspace.coverage_dir.mkdir(parents=True, exist_ok=True)
     source_dir = workspace.coverage_dir / "source"
     exec_file = workspace.coverage_dir / "jacoco.exec"
@@ -636,29 +664,43 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
         tools = jacoco_tools(base_url=base_url)
         agent = (f"-javaagent:{tools['agent']}=destfile={exec_file},append=true,"
                  f"includes={include_patterns(library_jar)}")
-        steps, classes_dirs, report_dirs = build_commands(build_tool, project_root, module_dir, release,
-                                                          extra_tests)
-
-        for jdk in order:
-            summary["jdks_tried"].append(jdk)
-            exec_file.unlink(missing_ok=True)
-            for d in report_dirs:
-                shutil.rmtree(d, ignore_errors=True)
-            log_file = workspace.coverage_dir / f"build-jdk{jdk}.log"
-            log_file.unlink(missing_ok=True)
-            progress("jdk", f"JDK {jdk} (log: {log_file})")
-            timed_out = run_build(steps, project_root, jdks[jdk], agent, log_file, timeout, progress)
-            if timed_out:
-                raise CoverageError("timeout", f"build did not finish within {timeout} s (JDK {jdk})")
-            # Maven's own summary is authoritative; the XML reports can miss suites
-            counts = (build_tool == "maven" and maven_log_counts(log_file)) or test_counts(report_dirs)
-            if counts["tests"] > 0:
-                summary["jdk"], summary["tests"] = jdk, counts
-                summary["log"] = log_file.name
+        # First the build as it is; if no JDK runs the tests, again without the profiles that
+        # switch on by JDK version (they often need one exact JDK for newer-Java tests)
+        passes = [()]
+        if build_tool == "maven":
+            profiles = jdk_profiles(project_root)
+            if profiles:
+                passes.append(tuple(profiles))
+        for disabled in passes:
+            steps, classes_dirs, report_dirs = build_commands(build_tool, project_root, module_dir, release,
+                                                              extra_tests, disabled)
+            if disabled:
+                progress("jdk", f"retrying without the JDK-activated profiles {', '.join(disabled)}")
+            for jdk in order:
+                summary["jdks_tried"].append(jdk)
+                exec_file.unlink(missing_ok=True)
+                for d in report_dirs:
+                    shutil.rmtree(d, ignore_errors=True)
+                suffix = "-no-jdk-profiles" if disabled else ""
+                log_file = workspace.coverage_dir / f"build-jdk{jdk}{suffix}.log"
+                log_file.unlink(missing_ok=True)
+                progress("jdk", f"JDK {jdk} (log: {log_file})")
+                timed_out = run_build(steps, project_root, jdks[jdk], agent, log_file, timeout, progress)
+                if timed_out:
+                    raise CoverageError("timeout", f"build did not finish within {timeout} s (JDK {jdk})")
+                # Maven's own summary is authoritative; the XML reports can miss suites
+                counts = (build_tool == "maven" and maven_log_counts(log_file)) or test_counts(report_dirs)
+                if counts["tests"] > 0:
+                    summary["jdk"], summary["tests"] = jdk, counts
+                    summary["log"] = log_file.name
+                    summary["disabled_profiles"] = list(disabled)
+                    break
+                reason = first_error(log_file) or "no tests ran"
+                summary["attempts"].append({"jdk": jdk, "disabled_profiles": list(disabled), "reason": reason,
+                                            "log": log_file.name})
+                progress("jdk", f"JDK {jdk} failed: {reason}")
+            if summary["jdk"] is not None:
                 break
-            reason = first_error(log_file) or "no tests ran"
-            summary["attempts"].append({"jdk": jdk, "reason": reason, "log": log_file.name})
-            progress("jdk", f"JDK {jdk} failed: {reason}")
         else:
             raise CoverageError("build_failed", f"no tests ran with JDK {', '.join(map(str, order))}; "
                                                 f"logs: {workspace.coverage_dir}/build-jdk*.log")

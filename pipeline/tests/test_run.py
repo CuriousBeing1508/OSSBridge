@@ -94,7 +94,9 @@ def test_skip_coverage_option(steps, tmp_path):
     calls = steps()
     record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results", skip_coverage=True)
     assert "coverage" not in calls
-    assert record["steps"]["coverage"]["detail"] == "skipped with --skip-coverage"
+    assert record["steps"]["coverage"]["status"] == "skipped"
+    assert record["steps"]["coverage"]["detail"] == "not run (--skip-coverage)"
+    assert record["steps"]["api_coverage"]["status"] == "skipped"
 
 
 def test_an_error_in_one_step_does_not_stop_the_other_branch(steps, tmp_path):
@@ -126,3 +128,35 @@ def test_lock_is_released_after_a_run_even_if_it_fails(steps, tmp_path):
     run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
     assert not (tmp_path / "org.example__lib@1.0" / "run.lock").exists()
     run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")   # can run again
+
+
+def test_steps_one_at_a_time_record_into_one_run(steps, tmp_path):
+    calls = steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
+                            "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
+                            "hint": "Locally: pass --jdk N."})
+    for name, _ in run.STEPS:
+        record = run.run_step(GA, V, name, root=tmp_path, results_dir=tmp_path / "results")
+    assert calls == ["candidates", "collect", "public_api", "coverage", "store_results"]   # api_coverage skipped
+    assert statuses(record) == {"dependents": "ok", "collect": "ok", "api": "ok", "coverage": "failed",
+                                "api_coverage": "skipped", "store": "ok"}
+    assert record["status"] == "partial" and "finished_at" in record
+    assert not (tmp_path / "org.example__lib@1.0" / "run.lock").exists()
+
+
+def test_a_later_step_needs_an_existing_run(steps, tmp_path):
+    steps()
+    with pytest.raises(FileNotFoundError, match="--step dependents first"):
+        run.run_step(GA, V, "collect", root=tmp_path, results_dir=tmp_path / "results")
+
+
+def test_report_is_plain_markdown(steps, tmp_path):
+    steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
+                    "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
+                    "hint": "Locally: pass --jdk N."})
+    record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
+    text = run.report(record)
+    assert text.startswith("## OSSBridge analysis: org.example:lib:1.0\n\nStatus: **partial**")
+    assert "| 1 Dependents | ok |" in text and "| 4 dependent projects |" in text
+    assert "| 6 API coverage | skipped |" in text
+    assert "- JDK 8: Source option 7 is no longer supported" in text
+    assert text.isascii()                                     # no symbols

@@ -225,3 +225,25 @@ def test_every_failure_status_has_a_hint():
                 "no_jdk", "build_failed", "timeout", "no_coverage", "report_failed", "error"}
     assert statuses <= set(coverage.HINTS)
     assert "--jdk" in coverage.hint("build_failed") and coverage.ISSUES_URL in coverage.hint("build_failed")
+
+
+def test_first_error_skips_headers(tmp_path):
+    log = tmp_path / "build.log"
+    write(log, "[ERROR] COMPILATION ERROR : \n[INFO] ----\n[ERROR] invalid source release 14 with --enable-preview\n")
+    assert coverage.first_error(log) == "invalid source release 14 with --enable-preview"
+
+
+def test_jdk_profiles(tmp_path):
+    write(tmp_path / "pom.xml", """<project xmlns="http://maven.apache.org/POM/4.0.0"><artifactId>lib</artifactId>
+      <profiles>
+        <profile><id>java14+</id><activation><jdk>[14,)</jdk></activation></profile>
+        <profile><id>release</id><activation><property><name>release</name></property></activation></profile>
+        <profile><id>no-activation</id></profile>
+      </profiles></project>""")
+    assert coverage.jdk_profiles(tmp_path) == ["java14+"]
+
+
+def test_build_commands_can_disable_profiles(tmp_path, monkeypatch):
+    monkeypatch.setattr(coverage.shutil, "which", lambda name: "/usr/bin/mvn")
+    steps, _, _ = coverage.build_commands("maven", tmp_path, tmp_path, 8, disabled_profiles=("java14+", "jdk9"))
+    assert "-P!java14+,!jdk9" in steps[0][0]

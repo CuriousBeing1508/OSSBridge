@@ -19,6 +19,14 @@ run is going on), and progress is printed as the run goes.
 
 Step statuses: ok | failed | skipped. The exit code is 0 when step 7 stored the
 results, even if some steps failed (see run.json), and 1 otherwise.
+
+One step at a time (e.g. one GitHub Actions step each):
+
+    python -m ossbridge_pipeline.run <release> --step dependents   # starts a new run.json
+    python -m ossbridge_pipeline.run <release> --step collect      # ... api, coverage, api_coverage, store
+
+records into the same run.json and skips a step whose prerequisites did not succeed;
+the exit code is 1 only if that step failed. --report prints run.json as Markdown.
 ================================================================================
 """
 
@@ -51,6 +59,10 @@ STEPS = [
 
 class StepFailed(Exception):
     pass
+
+
+class StepSkipped(Exception):
+    """The step was not run on purpose (e.g. --skip-coverage)."""
 
 
 class RunLocked(Exception):
@@ -91,6 +103,22 @@ class Run:
                        "status": "running",
                        "steps": {name: {"title": title, "status": "pending"} for name, title in STEPS}}
 
+    @classmethod
+    def resume(cls, workspace, options, progress):
+        """Continue the run recorded in run.json (for running one step at a time)."""
+        if not workspace.run_json.exists():
+            raise FileNotFoundError(f"{workspace.run_json} not found; run --step dependents first")
+        r = cls(workspace, options, progress)
+        r.record = json.loads(workspace.run_json.read_text(encoding="utf-8"))
+        return r
+
+    def finish(self):
+        statuses = [s["status"] for s in self.record["steps"].values()]
+        self.record["status"] = ("ok" if all(s == "ok" for s in statuses)
+                                 else "partial" if self.record["steps"]["store"]["status"] == "ok" else "failed")
+        self.record["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.save()
+
     def save(self):
         self.ws.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.ws.run_json.with_suffix(".tmp")
@@ -113,6 +141,8 @@ class Run:
         try:
             summary = function()
             entry.update(status="ok", summary=summary)
+        except StepSkipped as e:
+            entry.update(status="skipped", detail=str(e))
         except StepFailed as e:
             entry.update(status="failed", detail=str(e))
         except Exception as e:   # a step's bug or environment problem must not stop the other branch
@@ -136,17 +166,47 @@ def run_pipeline(library_ga, version, index=DEFAULT_INDEX, target=collect.DEFAUL
                "timeout": timeout, "jdk": jdk}
     acquire_lock(ws)
     try:
-        return _run_steps(ws, options, progress, index, target, top_target, max_tried, fetch_missing,
-                          skip_coverage, keep_jars, timeout, jdk, results_dir)
+        r = Run(ws, options, progress)
+        r.save()
+        for name, function, needs in step_table(r, index, target, top_target, max_tried, fetch_missing,
+                                                skip_coverage, keep_jars, timeout, jdk, results_dir):
+            r.step(name, function, needs)
+        r.finish()
+        return r.record
     finally:
         ws.lock_file.unlink(missing_ok=True)
 
 
-def _run_steps(ws, options, progress, index, target, top_target, max_tried, fetch_missing, skip_coverage,
-               keep_jars, timeout, jdk, results_dir):
+def run_step(library_ga, version, step, index=DEFAULT_INDEX, target=collect.DEFAULTS["target"],
+             top_target=collect.DEFAULTS["top_target"], max_tried=collect.DEFAULTS["max_tried"],
+             fetch_missing=False, skip_coverage=False, keep_jars=False, timeout=coverage.DEFAULT_TIMEOUT, jdk=None,
+             root=DEFAULT_ROOT, results_dir=store_results.DEFAULT_RESULTS, progress=None):
+    """Run one step, recorded in run.json; 'dependents' starts a new run. Returns the run record."""
+    progress = progress or (lambda step, event, detail: None)
+    ws = Workspace(library_ga, version, root=root)
+    options = {"index": str(index), "target": target, "top_target": top_target, "max_tried": max_tried,
+               "fetch_missing": fetch_missing, "skip_coverage": skip_coverage, "keep_jars": keep_jars,
+               "timeout": timeout, "jdk": jdk}
+    acquire_lock(ws)
+    try:
+        r = Run(ws, options, progress) if step == STEPS[0][0] else Run.resume(ws, options, progress)
+        table = {name: (function, needs) for name, function, needs in
+                 step_table(r, index, target, top_target, max_tried, fetch_missing, skip_coverage, keep_jars,
+                            timeout, jdk, results_dir)}
+        function, needs = table[step]
+        r.step(step, function, needs)
+        if step == STEPS[-1][0]:
+            r.finish()
+        return r.record
+    finally:
+        ws.lock_file.unlink(missing_ok=True)
+
+
+def step_table(r, index, target, top_target, max_tried, fetch_missing, skip_coverage, keep_jars, timeout, jdk,
+               results_dir):
+    """(name, function, prerequisite steps) for each step, in order."""
+    ws, progress = r.ws, r.progress
     library_ga, version = ws.library_ga, ws.version
-    r = Run(ws, options, progress)
-    r.save()
 
     def dependents():
         summary = candidates.run(ws, index)
@@ -165,7 +225,7 @@ def _run_steps(ws, options, progress, index, target, top_target, max_tried, fetc
 
     def test_coverage():
         if skip_coverage:
-            raise StepFailed("skipped with --skip-coverage")
+            raise StepSkipped("not run (--skip-coverage)")
         summary = coverage.run(ws, timeout=timeout, only_jdk=jdk,
                                progress=lambda stage, detail: progress("coverage", "progress", f"{stage}: {detail}"))
         if summary["status"] != "ok":
@@ -173,19 +233,51 @@ def _run_steps(ws, options, progress, index, target, top_target, max_tried, fetc
             raise StepFailed(f"coverage {summary['status']}: {summary['detail']}")
         return {k: summary[k] for k in ("repository", "tag", "build_tool", "jdk", "tests", "seconds")}
 
-    r.step("dependents", dependents)
-    r.step("collect", collection, needs=["dependents"])
-    r.step("api", lambda: public_api.run(ws))
-    r.step("coverage", test_coverage, needs=["api"])
-    r.step("api_coverage", lambda: api_coverage.run(ws), needs=["api", "coverage"])
-    r.step("store", lambda: store_results.run(ws, results_dir))
+    return [
+        ("dependents", dependents, []),
+        ("collect", collection, ["dependents"]),
+        ("api", lambda: public_api.run(ws), []),
+        ("coverage", test_coverage, ["api"]),
+        ("api_coverage", lambda: api_coverage.run(ws), ["api", "coverage"]),
+        ("store", lambda: store_results.run(ws, results_dir), []),
+    ]
 
-    statuses = [s["status"] for s in r.record["steps"].values()]
-    r.record["status"] = ("ok" if all(s == "ok" for s in statuses)
-                          else "partial" if r.record["steps"]["store"]["status"] == "ok" else "failed")
-    r.record["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    r.save()
-    return r.record
+
+def step_result(name, entry):
+    """A short plain-text result of a step for the report."""
+    s = entry.get("summary") or {}
+    if entry["status"] != "ok":
+        return entry.get("detail", "")
+    if name == "dependents":
+        return f"{s.get('candidates', 0):,} dependent projects"
+    if name == "collect":
+        return s.get("message", "")
+    if name == "api":
+        return f"{s.get('apis', 0):,} APIs"
+    if name == "coverage":
+        return f"{(s.get('tests') or {}).get('tests', 0):,} tests, JDK {s.get('jdk')}, tag {s.get('tag')}"
+    if name == "api_coverage":
+        return f"{s.get('covered_pct')}% of {s.get('apis', 0):,} APIs covered"
+    if name == "store":
+        return ", ".join(f"{t}: {n:,}" for t, n in s.items())
+    return ""
+
+
+def report(record):
+    """run.json as Markdown (e.g. for the GitHub Actions run summary)."""
+    lines = [f"## OSSBridge analysis: {record['library']}:{record['version']}", "",
+             f"Status: **{record['status']}**", "",
+             "| Step | Status | Seconds | Result |", "|---|---|---|---|"]
+    for name, title in STEPS:
+        entry = record["steps"][name]
+        result = step_result(name, entry).replace("|", "/").replace("\n", " ")
+        lines.append(f"| {title} | {entry['status']} | {entry.get('seconds', '')} | {result} |")
+    coverage_entry = record["steps"]["coverage"]
+    if coverage_entry.get("hint"):
+        lines += ["", "Test coverage could not be measured:", ""]
+        lines += [f"- JDK {a['jdk']}: {a['reason']}" for a in coverage_entry.get("attempts", [])]
+        lines += ["", coverage_entry["hint"]]
+    return "\n".join(lines) + "\n"
 
 
 def fetch_from_neo4j(ws, index):
@@ -215,11 +307,21 @@ def main():
     parser.add_argument("--timeout", type=int, default=coverage.DEFAULT_TIMEOUT,
                         help="Seconds per test-suite build attempt")
     parser.add_argument("--results", default=str(store_results.DEFAULT_RESULTS), help="Results folder")
+    parser.add_argument("--step", choices=[name for name, _ in STEPS],
+                        help="Run only this step, recorded in run.json ('dependents' starts a new run)")
+    parser.add_argument("--report", action="store_true", help="Print run.json as Markdown and exit")
     args = parser.parse_args()
     try:
         group, artifact, version = parse_release(args.release)
     except ValueError as e:
         sys.exit(str(e))
+
+    ws = Workspace(f"{group}:{artifact}", version)
+    if args.report:
+        if not ws.run_json.exists():
+            sys.exit(f"{ws.run_json} not found")
+        print(report(json.loads(ws.run_json.read_text(encoding="utf-8"))), end="")
+        return
 
     started = time.time()
     titles = dict(STEPS)
@@ -238,15 +340,25 @@ def main():
         text = {"start": "...", "ok": "done", "failed": f"FAILED: {detail}", "skipped": f"skipped ({detail})"}[event]
         print(f"{stamp} {titles[step]}: {text}", flush=True)
 
+    options = dict(index=args.index, target=args.target, top_target=args.top_target, max_tried=args.max_tried,
+                   fetch_missing=args.fetch_missing, skip_coverage=args.skip_coverage, keep_jars=args.keep_jars,
+                   timeout=args.timeout, jdk=args.jdk, results_dir=Path(args.results), progress=progress)
     try:
-        record = run_pipeline(f"{group}:{artifact}", version, index=args.index, target=args.target,
-                              top_target=args.top_target, max_tried=args.max_tried,
-                              fetch_missing=args.fetch_missing, skip_coverage=args.skip_coverage,
-                              keep_jars=args.keep_jars, timeout=args.timeout, jdk=args.jdk,
-                              results_dir=Path(args.results), progress=progress)
-    except RunLocked as e:
+        if args.step:
+            record = run_step(f"{group}:{artifact}", version, args.step, **options)
+            entry = record["steps"][args.step]
+            if state["line"]:
+                print()
+            print(f"  {step_result(args.step, entry)}")
+            for attempt in entry.get("attempts", []):
+                print(f"  JDK {attempt['jdk']} failed: {attempt['reason']}")
+            if entry.get("hint"):
+                print(f"  {entry['hint']}")
+            sys.exit(1 if entry["status"] == "failed" else 0)
+        record = run_pipeline(f"{group}:{artifact}", version, **options)
+    except (RunLocked, FileNotFoundError) as e:
         sys.exit(f"Not started: {e}")
-    print(f"\nRun {record['status']}: {Workspace(f'{group}:{artifact}', version).run_json}")
+    print(f"\nRun {record['status']}: {ws.run_json}")
     collection = record["steps"]["collect"].get("summary")
     if collection:
         print(f"  {collection['message']}")

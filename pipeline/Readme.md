@@ -306,6 +306,10 @@ changed:
    the next newer one when no tests run; a JDK that is too old usually fails within
    seconds. Builds for Java 7 or older are compiled as Java 8. `--jdk N` uses only that
    JDK. Installed JDKs are found automatically, or set `OSSBRIDGE_JDKS="17=/path,21=/path"`.
+   If no JDK runs the tests, the JDKs are tried again with the Maven profiles that switch
+   on by JDK version turned off (e.g. jackson-databind 2.12's `java14+`, which compiles
+   tests with Java 14 preview features that only JDK 14 accepts); `disabled_profiles` in
+   `coverage.json` records it, since some tests are then left out.
 4. **Coverage:** the JaCoCo agent is attached through `JAVA_TOOL_OPTIONS`, so every test
    JVM records coverage whatever the build configures, for the library's packages only.
    Checks unrelated to tests (license, style, enforcer, javadoc, ...) are skipped and
@@ -420,6 +424,49 @@ query. From Python: `store_results.run(Workspace(library, version))`.
 
 The original dataset folder can be converted to the same tables with
 `Results/convert_dataset.py`. The app does not read the result tables yet.
+
+## Run on GitHub Actions
+
+Two workflows in `.github/workflows/`:
+
+| Workflow | When | What it does |
+|---|---|---|
+| **Pipeline image** (`pipeline-image.yml`) | Push to `main` that changes `pipeline/` | Builds the image from `pipeline/Dockerfile`, runs the tests in it, publishes it as `ghcr.io/<owner>/ossbridge-pipeline:latest` |
+| **Analyze library** (`analyze-library.yml`) | Actions > Analyze library > Run workflow | Analyzes one library version with that image and publishes the results to the Hugging Face dataset |
+
+**Analyze library** inputs: `release` (`groupId:artifactId:version`), `target`, `top_target`,
+`jdk`, `skip_coverage`, `publish` (default on) and `request_id` (optional, shown in the
+run name). It downloads the dependents index and the published results from the
+dataset, runs each pipeline step as its own workflow step (`run --step <name>`, all
+recorded in one `run.json`), publishes with the repository secret `HF_TOKEN`, writes a
+table of the steps to the run summary (`run --report`), and attaches `run.json`, the
+summaries and the build logs as an artifact. A failed step is shown as failed without
+stopping the others, as in the single command. Two runs of the same version wait for
+each other. Steps can also be run one at a time locally:
+
+```bash
+../.venv/bin/python -m ossbridge_pipeline.run org.mybatis:mybatis:3.5.14 --step dependents
+../.venv/bin/python -m ossbridge_pipeline.run org.mybatis:mybatis:3.5.14 --step collect   # api, coverage, ...
+../.venv/bin/python -m ossbridge_pipeline.run org.mybatis:mybatis:3.5.14 --report
+```
+
+## Publish to Hugging Face
+
+```bash
+../.venv/bin/python -m ossbridge_pipeline.publish --dry-run   # print the dataset card only
+../.venv/bin/python -m ossbridge_pipeline.publish             # upload
+```
+
+Uploads the result tables (`results/`) and the dependents index (`dependents-index/`) to
+the dataset [rachna1508/ossbridge-results](https://huggingface.co/datasets/rachna1508/ossbridge-results)
+(`--repo` or `OSSBRIDGE_HF_DATASET` to change it), and writes its dataset card from the
+current results: the library versions included, the tables and columns, how the data is
+produced, its limitations, and how to query it. Each table is a dataset viewer config.
+Only changed files are transferred. Files written with an older schema are first
+rewritten to the current one (new columns empty), since all files of a table must have
+the same columns. Options: `--no-index`, `--card-only`, `--message`.
+
+The token comes from `hf auth login` (locally) or `HF_TOKEN` (GitHub Actions).
 
 ## Other scripts
 

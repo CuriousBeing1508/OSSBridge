@@ -123,3 +123,14 @@ def test_converter_tables_get_null_columns(tmp_path):
     result_tables.write_table(tmp_path, "apis", GA, V, [{"library_ga": GA, "version": V, "api_id": "x"}])
     con = result_tables.connect(tmp_path)
     assert con.execute("SELECT api_id, deprecated FROM apis").fetchall() == [("x", None)]
+
+
+def test_conform_rewrites_files_with_an_older_schema(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    old = tmp_path / "apis" / result_tables.file_name(GA, V)
+    old.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"library_ga": [GA], "version": [V], "api_id": ["x"], "kind": ["method"]}), old)
+    assert result_tables.conform(tmp_path) == [old]
+    assert pq.read_schema(old).names == result_tables.TABLES["apis"].names
+    assert result_tables.conform(tmp_path) == []          # already conforming

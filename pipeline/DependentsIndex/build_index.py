@@ -252,7 +252,7 @@ def add_library(index_dir, library, driver=None, batch_size=500_000):
     manifest = read_manifest(index_dir)
     manifest.setdefault("added", {})[library] = entry
     write_manifest(index_dir, manifest)
-    print(f"✓ {library}: {edges:,} edges, {versions} versions, "
+    print(f"  {library}: {edges:,} edges, {versions} versions, "
           f"{len(dependent_gas):,} non-test dependents in {entry['seconds']}s")
     return entry
 
@@ -307,7 +307,7 @@ def main():
     print("  Sorting and writing index...")
     manifest = finalize(raw_dir, out_dir, source)
     shutil.rmtree(raw_dir)
-    print(f"✓ {manifest['edges']:,} edges, {manifest['libraries']:,} libraries, "
+    print(f"  Done: {manifest['edges']:,} edges, {manifest['libraries']:,} libraries, "
           f"{manifest['library_versions']:,} library versions in {time.time() - start:.1f}s")
 
 

@@ -311,7 +311,7 @@ def main():
     report_path = Path(args.results) / "_reports" / f"{run_id}.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(reports, indent=2) + "\n")
-    print(f"✓ {len(reports)} library versions converted; report: {report_path}")
+    print(f"  {len(reports)} library versions converted; report: {report_path}")
 
 
 if __name__ == "__main__":
