@@ -1,119 +1,71 @@
 const express = require("express");
-const {
-  searchLibraries,
-  getVersions,
-  getDependents
-} = require("../controllers/dependencyController");
+const results = require("../results");
 
 const router = express.Router();
-const fs = require("fs");
-const path = require("path");
 
-// ====================================================================
-// DATASET PATH CONFIGURATION
-// ====================================================================
-const DATASET_ROOT = process.env.DATASET_PATH || 
-  path.resolve(__dirname, "../../../../data/dataset");
-
-console.log(`[INFO] Dataset root (dependencyRoutes): ${DATASET_ROOT}`);
-
-// Helper to build paths inside dataset
-const getDatasetPath = (...parts) => path.join(DATASET_ROOT, ...parts);
-
-// This url is just to test whether the backend is able to access the csv data correctly or not.
+// Where the result tables are read from, and when they were loaded
 // http://localhost:5050/api/dependencies/test-dataset
-router.get("/test-dataset", (req, res) => {
+router.get("/test-dataset", async (req, res) => {
   try {
-    const datasetPath = getDatasetPath('processed_csvs');
-    const files = fs.readdirSync(datasetPath);
-    const csvFiles = files.filter(f => f.endsWith(".csv"));
-    res.json({ datasetPath, files: csvFiles });
+    const versions = await results.query(
+      "SELECT library_ga, version FROM library_versions ORDER BY library_ga, version");
+    res.json({ resultsPath: results.RESULTS_PATH, loadedAt: results.loadedAt(), versions });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Search libraries by keyword
-// The URL that gets created is : http://localhost:5050/api/dependencies/search?query=jackson
-router.get("/search", (req, res) => {
+// Search libraries by keyword: groupId:artifactId of the libraries with results
+// http://localhost:5050/api/dependencies/search?query=jackson
+router.get("/search", async (req, res) => {
   try {
     const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Query required" });
 
-    const datasetPath = getDatasetPath('processed_csvs');
-    const files = fs.readdirSync(datasetPath);
-
-    // Extract libraries matching query
-    const matches = new Set();
-    files.forEach(file => {
-      if (file.toLowerCase().includes(query.toLowerCase())) {
-        // remove extension & version
-        const libName = file.replace(/-\d+(\.\d+)*\.csv$/, "");
-        matches.add(libName);
-      }
-    });
-
-    res.json(Array.from(matches));
+    const rows = await results.query(`
+      SELECT DISTINCT library_ga FROM library_versions
+      WHERE contains(lower(library_ga), lower($query)) ORDER BY library_ga`, { query });
+    res.json(rows.map((r) => r.library_ga));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get versions of a library
+// Versions of a library that have results, oldest first
 // http://localhost:5050/api/dependencies/versions?library=jackson-databind
-router.get("/versions", (req, res) => {
+router.get("/versions", async (req, res) => {
   try {
     const { library } = req.query;
     if (!library) return res.status(400).json({ error: "Library required" });
 
-    const datasetPath = getDatasetPath('processed_csvs');
-    const files = fs.readdirSync(datasetPath);
-    
-    console.log("Sample files:", files.slice(0, 5)); // See what files look like
-    
-    const versions = files
-      .filter(f => f.includes(library))
-      .map(f => {
-        const match = f.match(/-(\d+(?:\.\d+)+)/);
-        console.log(`File: ${f}, Match: ${match ? match[1] : 'NO MATCH'}`); // Debug each file
-        return match ? match[1] : null;
-      })
-      .filter(Boolean);
-
-    console.log("Final versions:", versions);
-    res.json([...new Set(versions)]);
+    const ga = await results.resolveLibrary(library);
+    const rows = ga ? await results.query(
+      "SELECT version FROM library_versions WHERE library_ga = $ga", { ga }) : [];
+    res.json(rows.map((r) => r.version).sort(results.compareVersions));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get dependents of a library version
-// http://localhost:5050/api/dependencies/details?library=jackson-databind&version=2.17.0
-router.get("/details", (req, res) => {
+// Dependents of a library version: how many the dependents index lists, and a sample
+// of the analyzed ones
+// http://localhost:5050/api/dependencies/details?library=jackson-databind&version=2.17.2
+router.get("/details", async (req, res) => {
   try {
-    const { library, version } = req.query;
-    if (!library || !version)
-      return res.status(400).json({ error: "Library and version required" });
+    const lv = await results.libraryVersion(req, res);
+    if (!lv) return;
 
-    const datasetPath = getDatasetPath('processed_csvs');
-    const files = fs.readdirSync(datasetPath);
-    const target = files.find(f => f.includes(library) && f.includes(version));
-
-    if (!target) return res.status(404).json({ error: "CSV not found" });
-
-    const dependents = [];
-    fs.createReadStream(path.join(datasetPath, target))
-      .pipe(require("csv-parser")())
-      .on("data", row => dependents.push(row))
-      .on("end", () => {
-        res.json({
-          library,
-          version,
-          dependentsCount: dependents.length,
-          sample: dependents.slice(0, 5),
-        });
-      });
+    const sample = await results.query(`
+      SELECT dependent_ga || ':' || dependent_version AS release_id, dependent_ga, dependent_version,
+             tier, rank, reach
+      FROM dependents WHERE library_ga = $ga AND version = $version AND selected
+      ORDER BY rank LIMIT 5`, { ga: lv.ga, version: lv.version });
+    res.json({
+      library: req.query.library,
+      version: lv.version,
+      dependentsCount: lv.summary.dependent_projects,
+      sample,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

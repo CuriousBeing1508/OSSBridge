@@ -42,6 +42,8 @@ TABLES = {
         ("coverage_status", pa.string()),       # ok, or why there is no coverage (coverage.json)
         ("tests", pa.int64()),                  # tests run by the library's own suite
         ("api_coverage_pct", pa.float64()),
+        ("instructions_missed", pa.int64()),    # whole library (JaCoCo report totals)
+        ("instructions_covered", pa.int64()),
     ]),
     # API of the library jar (step 4)
     "apis": pa.schema([

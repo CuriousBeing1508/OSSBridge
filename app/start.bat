@@ -19,7 +19,7 @@ REM Check if .env exists
 if not exist .env (
     echo WARNING: .env file not found!
     echo.
-    echo Please make sure .env file exists and contains DATASET_PATH
+    echo Please copy .env.example to .env and set where the result tables are
     echo.
     pause
     exit /b 1

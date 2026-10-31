@@ -78,6 +78,10 @@ def make_run(tmp_path, with_coverage=True):
             {"api_id": P + "Codec.encode([B)[B", "kind": "method", "status": "covered_by_override",
              "overrides": "2", "overrides_covered": "1", "instruction_missed": "4", "instruction_covered": "0"}])
         ws.coverage_json.write_text(json.dumps({"status": "ok", "tests": {"tests": 42}}))
+        ws.coverage_xml.write_text('<report name="lib"><package name="org/example/lib">'
+                                   '<counter type="INSTRUCTION" missed="1" covered="2"/></package>'
+                                   '<counter type="INSTRUCTION" missed="30" covered="70"/>'
+                                   '<counter type="LINE" missed="3" covered="7"/></report>')
     else:
         ws.coverage_json.write_text(json.dumps({"status": "build_failed", "tests": None}))
     return ws
@@ -91,8 +95,9 @@ def test_store_writes_all_tables(tmp_path):
 
     con = result_tables.connect(results)
     assert con.execute("SELECT packages, dependent_projects, dependents_using, target_reached, coverage_status, "
-                   "tests, api_coverage_pct FROM library_versions").fetchall() == [
-        (["org.example.lib", "org.example.lib.internal"], 2, 1, False, "ok", 42, 100.0)]
+                   "tests, api_coverage_pct, instructions_missed, instructions_covered "
+                   "FROM library_versions").fetchall() == [
+        (["org.example.lib", "org.example.lib.internal"], 2, 1, False, "ok", 42, 100.0, 30, 70)]
     assert con.execute("SELECT dependent_ga, dependent_version, release_ts, tier, rank, uses_library, selected, "
                    "analyzed, bytecode_instructions FROM dependents ORDER BY rank").fetchall() == [
         ("com.acme:app", "2.0", 1700000000000, "A", 1, True, True, True, 123),

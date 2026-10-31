@@ -8,7 +8,7 @@ It is built with **Node.js** and **Express**, following a modular structure for 
 ## Tech Stack
 - **Node.js** (Runtime)
 - **Express.js** (Web Framework)
-- **CSV-Parser** (CSV handling)
+- **DuckDB** (queries the OSSBridge result tables, Parquet; see `src/results.js`)
 - **CORS** (Cross-Origin requests)
 - **Dotenv** (Environment configuration)
 - (Optional) **MongoDB / PostgreSQL** (for persistence)

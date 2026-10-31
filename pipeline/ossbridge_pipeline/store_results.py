@@ -8,7 +8,8 @@ Writes the outputs of a run folder into the result tables (result_tables.py),
 replacing any earlier tables of the same library version:
 
     library_versions  one summary row: dependents found / tried / using /
-                      selected, coverage status, tests run, API coverage
+                      selected, coverage status, tests run, API coverage, and
+                      the library's instruction totals from coverage.xml
     apis              apis.csv (step 4)
     dependents        dependents.csv (collection loop), with release dates from
                       candidates.csv and bytecode sizes from usage-summary.csv
@@ -33,6 +34,7 @@ import sys
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from xml.etree import ElementTree
 
 import duckdb
 
@@ -52,6 +54,16 @@ def jar_packages(jar_path):
 
 def read_json(path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def report_instructions(coverage_xml):
+    """(missed, covered) instructions of the whole JaCoCo report, or (None, None)."""
+    if not coverage_xml.exists():
+        return None, None
+    for counter in ElementTree.parse(coverage_xml).getroot().findall("counter"):
+        if counter.get("type") == "INSTRUCTION":
+            return int(counter.get("missed")), int(counter.get("covered"))
+    return None, None
 
 
 def csv_source(path):
@@ -136,6 +148,7 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         api_coverage_pct = round(100 * covered / reachable, 1) if reachable else None
 
     tests = (coverage or {}).get("tests") or {}
+    instructions_missed, instructions_covered = report_instructions(ws.coverage_xml)
     result_tables.write_table(results_dir, "library_versions", ga, v, [{
         "library_ga": ga, "version": v, "packages": jar_packages(ws.library_jar), "run_id": run_id,
         "dependent_projects": (collection or {}).get("candidates"),
@@ -146,6 +159,8 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         "coverage_status": (coverage or {}).get("status", "not_run"),
         "tests": tests.get("tests"),
         "api_coverage_pct": api_coverage_pct,
+        "instructions_missed": instructions_missed,
+        "instructions_covered": instructions_covered,
     }])
     written["library_versions"] = 1
     result_tables.write_run(results_dir, {

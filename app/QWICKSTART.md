@@ -7,79 +7,76 @@
    - Supports: Windows 10/11, macOS 10.15+, Linux
    - Free for educational and research use
 
-2. **Dataset** downloaded from Zenodo
-   - Download the Dataset.zip from Zenodo
-   - Extract it to a location on your computer
+2. **Result tables**: the app reads the OSSBridge result tables (Parquet files,
+   one per table and library version). Either
+   - read them from the published Hugging Face dataset
+     (https://huggingface.co/datasets/rachna1508/ossbridge-results), no download needed, or
+   - use a local copy: the pipeline writes them to `data/results`, and
+     `python -m ossbridge_pipeline.publish --download` (from `pipeline/`) downloads the published ones there.
 
 ---
 
 ## Setup (5 minutes)
 
-### Step 1: Extract OSSBridge Package
+### Step 1: Get OSSBridge
 
-Extract the `OSSBridge-Docker.zip` file to a folder on your computer.
+Clone the repository; the app is in its `app/` folder.
 
-### Step 2: Configure Dataset Path
+### Step 2: Choose where the result tables are read from
 
-1. Open the `.env` file in a text editor:
+1. Copy `.env.example` to `.env` and open it in a text editor:
 
    **Mac/Linux:**
 ```bash
+   cp .env.example .env
    nano .env
 ```
 
    **Windows:**
 ```
+   copy .env.example .env
    notepad .env
 ```
 
-2. Update the `DATASET_PATH` line with the location where you extracted the dataset:
+2. Keep one of the two settings:
 
-   **Mac Example:**
+   **A local results folder** (default: the repo's `data/results`):
 ```bash
-   DATASET_PATH=/Users/yourname/Downloads/Dataset
+   RESULTS_DIR=../data/results
 ```
 
-   **Windows Example:**
-```
-   DATASET_PATH=C:/Users/yourname/Downloads/Dataset
-```
-
-   **Linux Example:**
+   **The published Hugging Face dataset:**
 ```bash
-   DATASET_PATH=/home/yourname/Downloads/Dataset
-```
-
-   **Or use the default** (dataset placed in the repo's `data/dataset` folder):
-```bash
-   DATASET_PATH=../data/dataset
+   RESULTS_PATH=hf://datasets/rachna1508/ossbridge-results/results
 ```
 
 3. Save the file and close the editor
+
+The backend loads the tables when it starts; restart it to see new results.
 
 ### Step 3: Start OSSBridge
 
 **Mac/Linux:**
 ```bash
-cd OSSBridge-Docker
+cd app
 ./start.sh
 ```
 
 **Windows:**
 ```
-cd OSSBridge-Docker
+cd app
 start.bat
 ```
 
 **Or manually:**
 ```bash
-cd OSSBridge-Docker
+cd app
 docker-compose up --build
 ```
 
 ### Step 4: Access the Application
 
-Once you see "Server running on port 5050" in the terminal:
+Once you see "OSSBridge backend running on http://localhost:5050" in the terminal:
 
 1. Open your web browser
 2. Go to: **http://localhost:3000**
@@ -120,12 +117,12 @@ docker-compose down
 - **Solution:** Start the Docker Desktop application
 - Wait for Docker to fully start (whale icon in system tray)
 
-### "Cannot find dataset" or "ENOENT: no such file or directory"
-- **Problem:** Dataset path in `.env` is incorrect
+### "Could not load the result tables"
+- **Problem:** The backend found no result tables where `.env` points
 - **Solution:** 
-  1. Check the path in `.env` file
-  2. Make sure you extracted the Dataset.zip
-  3. Use absolute path (full path from root)
+  1. Check `RESULTS_DIR` (or `RESULTS_PATH`) in `.env`
+  2. A local folder must contain `library_versions/`, `apis/`, `dependents/`, `api_usage/` and `api_coverage/`
+  3. Use an absolute path if the relative one does not work
   4. On Windows, use forward slashes: `C:/Users/...` not `C:\Users\...`
 
 ### "Port 3000 already in use"
@@ -156,7 +153,7 @@ docker-compose down
 - **RAM:** 4GB minimum, 8GB recommended
 - **Disk Space:** 
   - ~2GB for Docker images
-  - Dataset size (varies)
+  - Result tables: a few MB per library version
   - ~1GB for temporary build files
 - **Docker Desktop:** Latest version
 

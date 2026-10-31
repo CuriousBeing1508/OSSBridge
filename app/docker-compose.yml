@@ -11,9 +11,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5050
-      - DATASET_PATH=/data/dataset
+      - RESULTS_PATH=${RESULTS_PATH:-/data/results}
     volumes:
-      - ${DATASET_PATH}:/data/dataset:ro
+      - ${RESULTS_DIR:-../data/results}:/data/results:ro
     restart: unless-stopped
     networks:
       - ossbridge-network

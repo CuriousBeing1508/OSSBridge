@@ -1,848 +1,323 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const csv = require("csv-parser");
+const results = require("../results");
 
 const router = express.Router();
 
+// A method is identified by its signature <package>.<Class>.<method> (all its
+// overloads, see results.js). Usage counts are caller classes, as in the
+// analysis routes.
 
-const DATASET_ROOT = process.env.DATASET_PATH || 
-  path.resolve(__dirname, "../../../../data/dataset");
+const round2 = (x) => parseFloat(x.toFixed(2));
 
-console.log(`[INFO] Dataset root (searchMethods): ${DATASET_ROOT}`);
-
-// Helper to build paths inside dataset
-const getDatasetPath = (...parts) => path.join(DATASET_ROOT, ...parts);
-
-/**
- * ====================================================================
- * CACHING UTILITY FUNCTIONS
- * ====================================================================
- */
-
-const CACHE_DIR = getDatasetPath('CachedAnalytics');
-
-// Ensure cache directory exists
-if (!fs.existsSync(CACHE_DIR)) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-}
-
-/**
- * Generate cache file path for an endpoint
- */
-function getCachePath(library, version, endpointName, extraParams = {}) {
-  const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
-  
-  // Create a stable filename from parameters
-  let filename = `${cleanLibrary}-${version}_${endpointName}`;
-  
-  // Add extra params to filename if provided
-  if (Object.keys(extraParams).length > 0) {
-    const paramString = Object.entries(extraParams)
-      .sort(([a], [b]) => a.localeCompare(b)) // Sort for stability
-      .map(([key, value]) => `${key}-${value}`)
-      .join('_');
-    filename += `_${paramString}`;
-  }
-  
-  filename += '.json';
-  
-  // Sanitize filename (remove special characters)
-  filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-  
-  return path.join(CACHE_DIR, filename);
-}
-
-/**
- * Load cached data if it exists and is valid
- */
-function loadCache(cachePath) {
-  try {
-    if (fs.existsSync(cachePath)) {
-      const data = fs.readFileSync(cachePath, 'utf8');
-      const cached = JSON.parse(data);
-      
-      return {
-        data: cached.data,
-        timestamp: cached.timestamp,
-        exists: true
-      };
-    }
-  } catch (err) {
-    console.error('Error loading cache:', err);
-  }
-  
-  return { exists: false };
-}
-
-/**
- * Save data to cache
- */
-function saveCache(cachePath, data) {
-  try {
-    const cacheData = {
-      data: data,
-      timestamp: new Date().toISOString(),
-      cachedAt: new Date().toLocaleString()
-    };
-    
-    fs.writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), 'utf8');
-    console.log(`Cache saved: ${cachePath}`);
-    return true;
-  } catch (err) {
-    console.error('Error saving cache:', err);
-    return false;
-  }
-}
-
-/**
- * Middleware to handle caching
- */
-function withCache(endpointName, dataFetcher, getExtraParams = null) {
+function handle(name, fn) {
   return async (req, res) => {
     try {
-      const { library, version, recompute } = req.query;
-      const shouldRecompute = recompute === 'true' || recompute === '1';
-      
-      // Get any extra parameters for cache key
-      const extraParams = getExtraParams ? getExtraParams(req.query) : {};
-      
-      // Generate cache path
-      const cachePath = getCachePath(library, version, endpointName, extraParams);
-      
-      // Try to load from cache if not recomputing
-      if (!shouldRecompute) {
-        const cached = loadCache(cachePath);
-        
-        if (cached.exists) {
-          console.log(`Serving from cache: ${cachePath}`);
-          return res.json({
-            ...cached.data,
-            _metadata: {
-              cached: true,
-              cachedAt: cached.timestamp,
-              message: "Data served from cache. Add ?recompute=true to regenerate."
-            }
-          });
-        }
-      }
-      
-      // Compute fresh data
-      console.log(`Computing fresh data for: ${endpointName}`);
-      const freshData = await dataFetcher(req, res);
-      
-      // Save to cache
-      saveCache(cachePath, freshData);
-      
-      // Return with metadata
-      res.json({
-        ...freshData,
-        _metadata: {
-          cached: false,
-          computedAt: new Date().toISOString(),
-          message: "Fresh data computed and cached."
-        }
-      });
-      
+      await fn(req, res);
     } catch (err) {
-      console.error(`Error in ${endpointName}:`, err);
+      console.error(`Error in ${name}:`, err);
       res.status(500).json({ error: err.message });
     }
   };
 }
 
-/**
- * Parse usage string to extract method information
- * Example: "com.fasterxml.jackson.databind.ObjectMapper.readValue(String, Class)"
- */
-function parseUsage(usage) {
-  if (!usage) return { methodFull: null };
-  
-  const cleaned = usage.split(":")[0].trim();
-  const parts = cleaned.split(".");
-  
-  if (parts.length >= 2) {
-    const methodWithParams = parts.pop();
-    const method = methodWithParams.split("(")[0];
-    const className = parts.pop();
-    const pkg = parts.join(".");
-    const methodFull = pkg && className ? `${pkg}.${className}.${method}` : null;
-    
-    return {
-      package: pkg,
-      class: className,
-      method: method,
-      methodFull: methodFull
-    };
-  }
-  
-  return { methodFull: null };
+const PRIMITIVES = {
+  B: "byte", C: "char", D: "double", F: "float", I: "int", J: "long", S: "short", Z: "boolean", V: "void",
+};
+
+/** Java types of a JVM descriptor: "(Ljava/lang/String;[I)V" -> { parameters: [...], returnType } */
+function decodeDescriptor(descriptor) {
+  const types = [];
+  let i = 0;
+  const next = () => {
+    let dims = 0;
+    while (descriptor[i] === "[") { dims++; i++; }
+    let type;
+    if (descriptor[i] === "L") {
+      const end = descriptor.indexOf(";", i);
+      type = descriptor.slice(i + 1, end).replace(/\//g, ".");
+      i = end + 1;
+    } else {
+      type = PRIMITIVES[descriptor[i]] || descriptor[i];
+      i++;
+    }
+    return type + "[]".repeat(dims);
+  };
+  if (!descriptor || descriptor[0] !== "(") return { parameters: [], returnType: "" };
+  i = 1;
+  while (i < descriptor.length && descriptor[i] !== ")") types.push(next());
+  i++;
+  return { parameters: types, returnType: next() };
 }
 
+function parameterDescriptors(descriptor) {
+  const match = /^\((.*)\)/.exec(descriptor || "");
+  return match ? match[1] : "";
+}
 
 /**
- * ====================================================================
  * ROUTE: /api/searchMethod/search
- * GET API
  * http://localhost:5050/api/searchMethod/search?library=jackson-databind&version=2.17.2&query=readValue
- * http://localhost:5050/api/searchMethod/search?library=jackson-databind&version=2.17.2&query=readValue&recompute=true
- * ====================================================================
- * Search for API methods by name/pattern - returns matching methods
- * CACHED: Results are cached per query
+ * Methods of the library whose name contains the query
  */
-router.get("/search", withCache(
-  "search-methods",
-  async (req) => {
-    const { library, version, query } = req.query;
-    
-    if (!library || !version || !query) {
-      throw new Error("library, version, and query parameters are required");
-    }
+router.get("/search", handle("search", async (req, res) => {
+  const { query } = req.query;
+  if (!query) {
+    return res.status(400).json({ error: "library, version, and query parameters are required" });
+  }
+  const lv = await results.libraryVersion(req, res);
+  if (!lv) return;
 
-    const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
+  const rows = await results.query(`
+    SELECT signature, member, package, class_name, api_id, descriptor FROM api_methods
+    WHERE library_ga = $ga AND version = $version AND contains(lower(member), lower($query))
+    ORDER BY lower(member) = lower($query) DESC, member, signature, api_id`,
+    { ga: lv.ga, version: lv.version, query });
 
-    // 1. Get available APIs from extraction
-    const availableCsvPath = getDatasetPath('LibraryJars', `${cleanLibrary}-${version}_available_apis.csv`);
-
-    if (!fs.existsSync(availableCsvPath)) {
-      throw new Error("Available APIs not found. Run extraction first.");
-    }
-
-    const matchingMethods = [];
-    const queryLower = query.toLowerCase();
-
-    await new Promise((resolve, reject) => {
-      fs.createReadStream(availableCsvPath)
-        .pipe(csv())
-        .on('data', (row) => {
-          if (row.Method && row.SimpleSignature) {
-            const methodName = row.Method.toLowerCase();
-            
-            // Match if method name contains the query
-            if (methodName.includes(queryLower)) {
-              matchingMethods.push({
-                methodName: row.Method,
-                simpleSignature: row.SimpleSignature,
-                fullSignature: row.FullSignature,
-                package: row.Package,
-                class: row.Class,
-                methodDescriptor: row.MethodDescriptor
-              });
-            }
-          }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
-
-    // Group by simple signature (to handle overloads)
-    const methodGroups = new Map();
-    
-    matchingMethods.forEach(method => {
-      if (!methodGroups.has(method.simpleSignature)) {
-        methodGroups.set(method.simpleSignature, {
-          methodName: method.methodName,
-          simpleSignature: method.simpleSignature,
-          package: method.package,
-          class: method.class,
-          overloadCount: 0,
-          overloads: []
-        });
-      }
-      
-      const group = methodGroups.get(method.simpleSignature);
-      group.overloadCount++;
-      group.overloads.push({
-        fullSignature: method.fullSignature,
-        methodDescriptor: method.methodDescriptor
-      });
-    });
-
-    // Convert to array and sort by relevance
-    const results = Array.from(methodGroups.values())
-      .sort((a, b) => {
-        // Exact match first
-        const aExact = a.methodName.toLowerCase() === queryLower ? 1 : 0;
-        const bExact = b.methodName.toLowerCase() === queryLower ? 1 : 0;
-        if (aExact !== bExact) return bExact - aExact;
-        
-        // Then by method name
-        return a.methodName.localeCompare(b.methodName);
-      });
-
-    return {
-      library,
-      version,
-      query,
-      totalMatches: results.length,
-      totalOverloads: matchingMethods.length,
-      results: results.map(r => ({
-        methodName: r.methodName,
-        signature: r.simpleSignature,
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.signature)) {
+      groups.set(r.signature, {
+        methodName: r.member,
+        signature: r.signature,
         package: r.package,
-        class: r.class,
-        fullClassName: `${r.package}.${r.class}`,
-        overloadCount: r.overloadCount,
-        overloads: r.overloads
-      }))
-    };
-  },
-  (query) => ({ query: query.query }) // Extra params for cache key
-));
+        class: r.class_name,
+        fullClassName: r.package ? `${r.package}.${r.class_name}` : r.class_name,
+        overloadCount: 0,
+        overloads: [],
+      });
+    }
+    const group = groups.get(r.signature);
+    group.overloadCount++;
+    group.overloads.push({ fullSignature: r.api_id, methodDescriptor: r.descriptor });
+  }
 
+  res.json({
+    library: req.query.library,
+    version: lv.version,
+    query,
+    totalMatches: groups.size,
+    totalOverloads: rows.length,
+    results: [...groups.values()],
+  });
+}));
 
 /**
- * ====================================================================
  * ROUTE: /api/searchMethod/analytics
- * GET API
  * http://localhost:5050/api/searchMethod/analytics?library=jackson-databind&version=2.17.2&signature=com.fasterxml.jackson.databind.ObjectMapper.readValue
- * http://localhost:5050/api/searchMethod/analytics?library=jackson-databind&version=2.17.2&signature=com.fasterxml.jackson.databind.ObjectMapper.readValue&recompute=true
- * ====================================================================
- * Detailed analytics for a specific API method
- * CACHED: Results are cached per signature
+ * Test coverage and use of one method
  */
-router.get("/analytics", withCache(
-  "method-analytics",
-  async (req) => {
-    const { library, version, signature } = req.query;
-    
-    if (!library || !version || !signature) {
-      throw new Error("library, version, and signature parameters are required");
-    }
+router.get("/analytics", handle("analytics", async (req, res) => {
+  const { signature } = req.query;
+  if (!signature) {
+    return res.status(400).json({ error: "library, version, and signature parameters are required" });
+  }
+  const lv = await results.libraryVersion(req, res);
+  if (!lv) return;
+  const params = { ga: lv.ga, version: lv.version, signature };
 
-    const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
-
-    // ===== 1. Get method details from available APIs =====
-    const availableCsvPath = getDatasetPath('LibraryJars', `${cleanLibrary}-${version}_available_apis.csv`);
-
-    if (!fs.existsSync(availableCsvPath)) {
-      throw new Error("Available APIs not found. Run extraction first.");
-    }
-
-    let methodInfo = null;
-    const overloads = [];
-
-    await new Promise((resolve, reject) => {
-      fs.createReadStream(availableCsvPath)
-        .pipe(csv())
-        .on('data', (row) => {
-          if (row.SimpleSignature === signature) {
-            if (!methodInfo) {
-              methodInfo = {
-                package: row.Package,
-                class: row.Class,
-                method: row.Method,
-                simpleSignature: row.SimpleSignature
-              };
-            }
-            overloads.push({
-              fullSignature: row.FullSignature,
-              methodDescriptor: row.MethodDescriptor,
-              returnType: row.ReturnType || "void",
-              parameters: row.Parameters || ""
-            });
-          }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
-
-    if (!methodInfo) {
-      throw new Error(`Method with signature '${signature}' not found`);
-    }
-
-    // ===== 2. Get test coverage for this method =====
-    const coverageCsvPath = getDatasetPath('TestCoverage', `${cleanLibrary}-${version}_all_apis_coverage.csv`);
-
-    let coverageInfo = {
-      hasCoverage: false,
-      instructionCovered: 0,
-      instructionMissed: 0,
-      coveragePercentage: 0
+  const overloadRows = await results.query(`
+    SELECT package, class_name, member, api_id, descriptor, status, instruction_missed, instruction_covered
+    FROM api_methods WHERE library_ga = $ga AND version = $version AND signature = $signature
+    ORDER BY api_id`, params);
+  if (overloadRows.length === 0) {
+    return res.status(404).json({ error: `Method with signature '${signature}' not found` });
+  }
+  const first = overloadRows[0];
+  const overloads = overloadRows.map((r) => {
+    const { parameters, returnType } = decodeDescriptor(r.descriptor);
+    return {
+      fullSignature: r.api_id,
+      methodDescriptor: r.descriptor,
+      returnType,
+      parameters: parameters.join(", "),
+      coverageStatus: r.status,
     };
+  });
 
-    if (fs.existsSync(coverageCsvPath)) {
-      await new Promise((resolve, reject) => {
-        fs.createReadStream(coverageCsvPath)
-          .pipe(csv())
-          .on('data', (row) => {
-            if (row.SimpleSignature === signature) {
-              const covered = parseInt(row.INSTRUCTION_COVERED) || 0;
-              const missed = parseInt(row.INSTRUCTION_MISSED) || 0;
-              
-              coverageInfo.instructionCovered += covered;
-              coverageInfo.instructionMissed += missed;
-            }
-          })
-          .on('end', resolve)
-          .on('error', reject);
-      });
+  // Test coverage: instructions of all overloads; an abstract method counts as
+  // covered when a tested override covers it
+  const instructionCovered = overloadRows.reduce((sum, r) => sum + r.instruction_covered, 0);
+  const instructionMissed = overloadRows.reduce((sum, r) => sum + r.instruction_missed, 0);
+  const total = instructionCovered + instructionMissed;
+  const coveragePercentage = total > 0 ? round2((instructionCovered / total) * 100) : 0;
+  const hasCoverage = instructionCovered > 0 ||
+    overloadRows.some((r) => r.status === "covered_by_override");
 
-      const total = coverageInfo.instructionCovered + coverageInfo.instructionMissed;
-      if (total > 0) {
-        coverageInfo.coveragePercentage = parseFloat(
-          ((coverageInfo.instructionCovered / total) * 100).toFixed(2)
-        );
-        // Set hasCoverage based on whether ANY instructions are covered
-        coverageInfo.hasCoverage = coverageInfo.instructionCovered > 0;
-      }
+  // Use across the analyzed dependents
+  const uses = await results.query(`
+    SELECT u.dependent, u.category, u.descriptor, u.caller_classes
+    FROM uses u JOIN api_methods m USING (library_ga, version, api_id)
+    WHERE u.library_ga = $ga AND u.version = $version AND m.signature = $signature`, params);
+  const [{ dependents: totalDependents }] = await results.query(`
+    SELECT count(DISTINCT dependent) AS dependents FROM uses
+    WHERE library_ga = $ga AND version = $version`, { ga: lv.ga, version: lv.version });
+
+  const byDependent = new Map();
+  const categoryDistribution = {};
+  const patterns = new Map();
+  let totalUsageCount = 0;
+  for (const u of uses) {
+    totalUsageCount += u.caller_classes;
+    categoryDistribution[u.category] = (categoryDistribution[u.category] || 0) + u.caller_classes;
+    if (!byDependent.has(u.dependent)) {
+      byDependent.set(u.dependent, { name: u.dependent, usageCount: 0, categories: {}, patterns: new Set() });
     }
-
-    // ===== 3. Analyze usage across dependents =====
-    const baseDir = getDatasetPath('StaticAnaResults', `${cleanLibrary}-${version}`, 'Dependents');
-
-    if (!fs.existsSync(baseDir)) {
-      throw new Error("Dependents folder not found");
+    const d = byDependent.get(u.dependent);
+    d.usageCount += u.caller_classes;
+    d.categories[u.category] = (d.categories[u.category] || 0) + u.caller_classes;
+    const pattern = parameterDescriptors(u.descriptor);
+    if (pattern) {
+      d.patterns.add(pattern);
+      if (!patterns.has(pattern)) patterns.set(pattern, { pattern, count: 0, dependents: new Set() });
+      patterns.get(pattern).count += u.caller_classes;
+      patterns.get(pattern).dependents.add(u.dependent);
     }
+  }
 
-    const dependentFiles = fs
-      .readdirSync(baseDir)
-      .filter((f) => f.endsWith("_third_party_calls.csv"));
+  const dependentsUsingMethod = byDependent.size;
+  const adoptionRate = totalDependents > 0 ? round2((dependentsUsingMethod / totalDependents) * 100) : 0;
+  const topParameterPatterns = [...patterns.values()]
+    .map((p) => ({
+      pattern: p.pattern,
+      usageCount: p.count,
+      dependentCount: p.dependents.size,
+      percentage: totalUsageCount > 0 ? ((p.count / totalUsageCount) * 100).toFixed(2) : 0,
+    }))
+    .sort((a, b) => b.usageCount - a.usageCount)
+    .slice(0, 15);
 
-    // Track detailed usage information
-    const dependentUsage = new Map();
-    const categoryBreakdown = {};
-    const parameterPatterns = new Map();
-    let totalUsageCount = 0;
-
-    // Process each dependent file
-    const filePromises = dependentFiles.map((file) => {
-      return new Promise((resolve) => {
-        const filePath = path.join(baseDir, file);
-        const dependentName = file.replace("_third_party_calls.csv", "");
-        let usageInThisDependent = 0;
-        const categoriesInThisDependent = {};
-        const patternsInThisDependent = new Set();
-        
-        fs.createReadStream(filePath)
-          .pipe(csv())
-          .on('data', (row) => {
-            const { methodFull } = parseUsage(row.Usage);
-            
-            if (methodFull && methodFull.trim() === signature) {
-              usageInThisDependent++;
-              totalUsageCount++;
-              
-              // Track category
-              const category = row.Category || "UNKNOWN";
-              categoriesInThisDependent[category] = 
-                (categoriesInThisDependent[category] || 0) + 1;
-              categoryBreakdown[category] = 
-                (categoryBreakdown[category] || 0) + 1;
-              
-              // Track parameter usage pattern
-              const fullUsage = row.Usage || "";
-              const paramMatch = fullUsage.match(/\((.*?)\)/);
-              if (paramMatch) {
-                const params = paramMatch[1].trim();
-                if (params) {
-                  patternsInThisDependent.add(params);
-                  
-                  if (!parameterPatterns.has(params)) {
-                    parameterPatterns.set(params, {
-                      pattern: params,
-                      count: 0,
-                      dependents: new Set()
-                    });
-                  }
-                  const patternInfo = parameterPatterns.get(params);
-                  patternInfo.count++;
-                  patternInfo.dependents.add(dependentName);
-                }
-              }
-            }
-          })
-          .on('end', () => {
-            if (usageInThisDependent > 0) {
-              dependentUsage.set(dependentName, {
-                name: dependentName,
-                usageCount: usageInThisDependent,
-                categories: categoriesInThisDependent,
-                uniquePatterns: patternsInThisDependent.size
-              });
-            }
-            resolve();
-          })
-          .on('error', () => resolve());
-      });
-    });
-
-    await Promise.all(filePromises);
-
-    // ===== 4. Calculate statistics =====
-    const dependentsUsingMethod = dependentUsage.size;
-    const totalDependents = dependentFiles.length;
-    const adoptionRate = totalDependents > 0 
-      ? ((dependentsUsingMethod / totalDependents) * 100).toFixed(2)
-      : 0;
-
-    // Sort dependents by usage
-    const topDependentUsers = Array.from(dependentUsage.values())
-      .sort((a, b) => b.usageCount - a.usageCount)
-      .slice(0, 20);
-
-    // Convert parameter patterns to array
-    const topParameterPatterns = Array.from(parameterPatterns.values())
-      .map(p => ({
-        pattern: p.pattern,
-        usageCount: p.count,
-        dependentCount: p.dependents.size,
-        percentage: totalUsageCount > 0 
-          ? ((p.count / totalUsageCount) * 100).toFixed(2)
-          : 0
-      }))
-      .sort((a, b) => b.usageCount - a.usageCount)
-      .slice(0, 15);
-
-    // Calculate average usage per dependent
-    const avgUsagePerDependent = dependentsUsingMethod > 0
-      ? (totalUsageCount / dependentsUsingMethod).toFixed(2)
-      : 0;
-
-    // ===== 5. Generate insights =====
-    const insights = [];
-    
-    // Coverage insight
-    if (coverageInfo.hasCoverage) {
-      if (coverageInfo.coveragePercentage >= 80) {
-        insights.push({
-          type: "positive",
-          message: `Excellent test coverage (${coverageInfo.coveragePercentage}%) - this widely-used API is well-tested`
-        });
-      } else if (coverageInfo.coveragePercentage >= 50) {
-        insights.push({
-          type: "warning",
-          message: `Moderate test coverage (${coverageInfo.coveragePercentage}%) - consider adding more tests for this popular API`
-        });
-      } else {
-        insights.push({
-          type: "critical",
-          message: `Low test coverage (${coverageInfo.coveragePercentage}%) - this API is widely used but undertested`
-        });
-      }
+  const insights = [];
+  if (hasCoverage) {
+    if (coveragePercentage >= 80) {
+      insights.push({ type: "positive", message: `Excellent test coverage (${coveragePercentage}%) - this widely-used API is well-tested` });
+    } else if (coveragePercentage >= 50) {
+      insights.push({ type: "warning", message: `Moderate test coverage (${coveragePercentage}%) - consider adding more tests for this popular API` });
     } else {
-      insights.push({
-        type: "critical",
-        message: "No test coverage detected - consider adding tests for this API used by multiple dependents"
-      });
+      insights.push({ type: "critical", message: `Low test coverage (${coveragePercentage}%) - this API is widely used but undertested` });
     }
+  } else {
+    insights.push({ type: "critical", message: "No test coverage detected - consider adding tests for this API used by multiple dependents" });
+  }
+  if (adoptionRate >= 50) {
+    insights.push({ type: "info", message: `High adoption rate (${adoptionRate}%) - this is a core API for your users` });
+  } else if (adoptionRate >= 25) {
+    insights.push({ type: "info", message: `Moderate adoption (${adoptionRate}%) - important for many users` });
+  }
+  if (topParameterPatterns.length > 5) {
+    insights.push({ type: "info", message: `${topParameterPatterns.length} different usage patterns detected - API is used flexibly` });
+  } else if (topParameterPatterns.length === 1) {
+    insights.push({ type: "info", message: "Single dominant usage pattern - API is used consistently" });
+  }
+  if (overloads.length > 1) {
+    insights.push({ type: "info", message: `${overloads.length} overloads available - ensure all variants are tested` });
+  }
 
-    // Adoption insight
-    if (parseFloat(adoptionRate) >= 50) {
-      insights.push({
-        type: "info",
-        message: `High adoption rate (${adoptionRate}%) - this is a core API for your users`
-      });
-    } else if (parseFloat(adoptionRate) >= 25) {
-      insights.push({
-        type: "info",
-        message: `Moderate adoption (${adoptionRate}%) - important for many users`
-      });
-    }
+  res.json({
+    library: req.query.library,
+    version: lv.version,
 
-    // Usage pattern insight
-    if (topParameterPatterns.length > 5) {
-      insights.push({
-        type: "info",
-        message: `${topParameterPatterns.length} different usage patterns detected - API is used flexibly`
-      });
-    } else if (topParameterPatterns.length === 1) {
-      insights.push({
-        type: "info",
-        message: "Single dominant usage pattern - API is used consistently"
-      });
-    }
+    methodInfo: {
+      package: first.package,
+      class: first.class_name,
+      method: first.member,
+      simpleSignature: signature,
+      fullClassName: first.package ? `${first.package}.${first.class_name}` : first.class_name,
+      overloadCount: overloads.length,
+      overloads,
+    },
 
-    // Overload insight
-    if (overloads.length > 1) {
-      insights.push({
-        type: "info",
-        message: `${overloads.length} overloads available - ensure all variants are tested`
-      });
-    }
+    testCoverage: {
+      hasCoverage,
+      instructionCovered,
+      instructionMissed,
+      coveragePercentage,
+      status: hasCoverage
+        ? (coveragePercentage >= 80 ? "excellent" : coveragePercentage >= 50 ? "good" : "needs improvement")
+        : "no coverage",
+    },
 
-    // ===== 6. Build response =====
-    return {
-      library,
-      version,
-      
-      // Method Information
-      methodInfo: {
-        ...methodInfo,
-        fullClassName: `${methodInfo.package}.${methodInfo.class}`,
-        overloadCount: overloads.length,
-        overloads: overloads
-      },
+    usageStatistics: {
+      totalDependents,
+      dependentsUsingMethod,
+      adoptionRate,
+      totalUsageCount,
+      averageUsagePerDependent: dependentsUsingMethod > 0 ? round2(totalUsageCount / dependentsUsingMethod) : 0,
+      uniqueParameterPatterns: topParameterPatterns.length,
+    },
 
-      // Test Coverage
-      testCoverage: {
-        ...coverageInfo,
-        status: coverageInfo.hasCoverage 
-          ? (coverageInfo.coveragePercentage >= 80 ? "excellent" 
-             : coverageInfo.coveragePercentage >= 50 ? "good" 
-             : "needs improvement")
-          : "no coverage"
-      },
+    categoryDistribution,
 
-      // Usage Statistics
-      usageStatistics: {
-        totalDependents: totalDependents,
-        dependentsUsingMethod: dependentsUsingMethod,
-        adoptionRate: parseFloat(adoptionRate),
-        totalUsageCount: totalUsageCount,
-        averageUsagePerDependent: parseFloat(avgUsagePerDependent),
-        uniqueParameterPatterns: topParameterPatterns.length
-      },
+    parameterPatterns: {
+      total: topParameterPatterns.length,
+      top15: topParameterPatterns,
+    },
 
-      // Category Breakdown
-      categoryDistribution: categoryBreakdown,
+    topDependents: [...byDependent.values()]
+      .sort((a, b) => b.usageCount - a.usageCount)
+      .slice(0, 20)
+      .map((d) => ({ name: d.name, usageCount: d.usageCount, categories: d.categories, uniquePatterns: d.patterns.size })),
 
-      // Parameter Usage Patterns
-      parameterPatterns: {
-        total: topParameterPatterns.length,
-        top15: topParameterPatterns
-      },
+    insights,
 
-      // Top Dependent Users
-      topDependents: topDependentUsers.map(d => ({
-        name: d.name,
-        usageCount: d.usageCount,
-        categories: d.categories,
-        uniquePatterns: d.uniquePatterns
-      })),
-
-      // Insights & Recommendations
-      insights: insights,
-
-      // Summary
-      summary: {
-        mainMessage: `This method is used ${totalUsageCount} times across ${dependentsUsingMethod} dependents (${adoptionRate}% adoption)`,
-        coverageSummary: coverageInfo.hasCoverage 
-          ? `${coverageInfo.coveragePercentage}% test coverage`
-          : "No test coverage",
-        recommendation: !coverageInfo.hasCoverage && dependentsUsingMethod > 5
-          ? "Critical: Add test coverage for this widely-used API"
-          : coverageInfo.coveragePercentage < 50 && dependentsUsingMethod > 3
+    summary: {
+      mainMessage: `This method is used ${totalUsageCount} times across ${dependentsUsingMethod} dependents (${adoptionRate}% adoption)`,
+      coverageSummary: hasCoverage ? `${coveragePercentage}% test coverage` : "No test coverage",
+      recommendation: !hasCoverage && dependentsUsingMethod > 5
+        ? "Critical: Add test coverage for this widely-used API"
+        : coveragePercentage < 50 && dependentsUsingMethod > 3
           ? "Warning: Improve test coverage for this popular API"
-          : " Coverage status acceptable"
-      }
-    };
-  },
-  (query) => ({ signature: query.signature }) // Extra params for cache key
-));
-
+          : "Coverage status acceptable",
+    },
+  });
+}));
 
 /**
- * ====================================================================
  * ROUTE: /api/searchMethod/compare
- * GET API
- * http://localhost:5050/api/searchMethod/compare?library=jackson-databind&version=2.17.2&signatures=sig1,sig2,sig3
- * http://localhost:5050/api/searchMethod/compare?library=jackson-databind&version=2.17.2&signatures=sig1,sig2,sig3&recompute=true
- * ====================================================================
- * Compare multiple methods side-by-side
- * This endpoint has multiple usecases:
- * 
- * USECASE1: Compare Related Methods (Which serialization method is most used?)
- * http://localhost:5050/api/searchMethod/compare?library=jackson-databind&version=2.17.2&signatures=com.fasterxml.jackson.databind.ObjectMapper.writeValue,com.fasterxml.jackson.databind.ObjectMapper.writeValueAsBytes,com.fasterxml.jackson.databind.ObjectMapper.writeValueAsString
- * 
- * USECASE2: Compare Similar Methods(Which method is more popular ?)
  * http://localhost:5050/api/searchMethod/compare?library=jackson-databind&version=2.17.2&signatures=com.fasterxml.jackson.databind.ObjectMapper.writeValue,com.fasterxml.jackson.databind.ObjectMapper.writeValueAsString
- * 
- * USECASE3: Compare Overloads (If a method has multiple overloads, which one do developers actually use?)
- * http://localhost:5050/api/searchMethod/compare?library=jackson-databind&version=2.17.2&signatures=com.fasterxml.jackson.databind.ObjectMapper.readValue,com.fasterxml.jackson.databind.ObjectReader.readValue
- * CACHED: Results are cached per set of signatures
+ * Use of several methods side by side
  */
-router.get("/compare", withCache(
-  "method-comparisons",
-  async (req) => {
-    const { library, version, signatures } = req.query;
-    
-    if (!library || !version || !signatures) {
-      throw new Error("library, version, and signatures parameters are required");
-    }
+router.get("/compare", handle("compare", async (req, res) => {
+  const signatures = (req.query.signatures || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (signatures.length < 2) {
+    return res.status(400).json({ error: "At least 2 signatures required for comparison" });
+  }
+  const lv = await results.libraryVersion(req, res);
+  if (!lv) return;
+  const params = { ga: lv.ga, version: lv.version };
 
-    const signatureList = signatures.split(',').map(s => s.trim());
-    
-    if (signatureList.length < 2) {
-      throw new Error("At least 2 signatures required for comparison");
-    }
+  const rows = await results.query(`
+    SELECT m.signature, sum(u.caller_classes) AS usage_count, count(DISTINCT u.dependent) AS dependent_count
+    FROM uses u JOIN api_methods m USING (library_ga, version, api_id)
+    WHERE u.library_ga = $ga AND u.version = $version
+      AND list_contains(string_split($signatures, ','), m.signature)
+    GROUP BY m.signature`, { ...params, signatures: signatures.join(",") });
+  const [{ dependents }] = await results.query(`
+    SELECT count(DISTINCT dependent) AS dependents FROM uses
+    WHERE library_ga = $ga AND version = $version`, params);
 
-    const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
-
-    // Get analytics for each method
-    const comparisons = [];
-    
-    for (const signature of signatureList) {
-      const baseDir = getDatasetPath('StaticAnaResults', `${cleanLibrary}-${version}`, 'Dependents');
-
-      const dependentFiles = fs
-        .readdirSync(baseDir)
-        .filter((f) => f.endsWith("_third_party_calls.csv"));
-
-      let usageCount = 0;
-      let dependentCount = 0;
-
-      for (const file of dependentFiles) {
-        const filePath = path.join(baseDir, file);
-        let foundInFile = false;
-        
-        await new Promise((resolve) => {
-          fs.createReadStream(filePath)
-            .pipe(csv())
-            .on('data', (row) => {
-              const { methodFull } = parseUsage(row.Usage);
-              if (methodFull && methodFull.trim() === signature) {
-                usageCount++;
-                foundInFile = true;
-              }
-            })
-            .on('end', resolve)
-            .on('error', resolve);
-        });
-
-        if (foundInFile) dependentCount++;
-      }
-
-      comparisons.push({
+  const found = new Map(rows.map((r) => [r.signature, r]));
+  const comparisons = signatures
+    .map((signature) => {
+      const r = found.get(signature) || { usage_count: 0, dependent_count: 0 };
+      return {
         signature,
-        usageCount,
-        dependentCount,
-        adoptionRate: ((dependentCount / dependentFiles.length) * 100).toFixed(2)
-      });
-    }
+        usageCount: r.usage_count,
+        dependentCount: r.dependent_count,
+        adoptionRate: dependents > 0 ? ((r.dependent_count / dependents) * 100).toFixed(2) : "0.00",
+      };
+    })
+    .sort((a, b) => b.usageCount - a.usageCount);
 
-    // Sort by usage count
-    comparisons.sort((a, b) => b.usageCount - a.usageCount);
-
-    return {
-      library,
-      version,
-      totalMethods: comparisons.length,
-      comparisons: comparisons,
-      winner: comparisons[0],
-      summary: {
-        message: `Most popular: ${comparisons[0].signature} with ${comparisons[0].usageCount} uses across ${comparisons[0].dependentCount} dependents`
-      }
-    };
-  },
-  (query) => ({ signatures: query.signatures }) // Extra params for cache key
-));
-
-
-/**
- * ====================================================================
- * ROUTE: /api/searchMethod/clear-cache
- * DELETE API
- * http://localhost:5050/api/searchMethod/clear-cache?library=jackson-databind&version=2.17.2
- * http://localhost:5050/api/searchMethod/clear-cache?library=jackson-databind&version=2.17.2&endpoint=method-analytics
- * ====================================================================
- * Clear cached data for a library version or specific endpoint
- */
-router.delete("/clear-cache", (req, res) => {
-  try {
-    const { library, version, endpoint } = req.query;
-    
-    if (!library || !version) {
-      return res.status(400).json({ 
-        error: "library and version parameters are required" 
-      });
-    }
-
-    const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
-    
-    // Get all cache files for this library-version
-    const pattern = endpoint 
-      ? `${cleanLibrary}-${version}_${endpoint}`
-      : `${cleanLibrary}-${version}_`;
-    
-    const files = fs.readdirSync(CACHE_DIR);
-    const matchingFiles = files.filter(f => f.startsWith(pattern) && f.endsWith('.json'));
-    
-    // Delete matching files
-    let deletedCount = 0;
-    matchingFiles.forEach(file => {
-      fs.unlinkSync(path.join(CACHE_DIR, file));
-      deletedCount++;
-    });
-
-    res.json({
-      success: true,
-      deletedCount,
-      message: endpoint 
-        ? `Cleared ${deletedCount} cache file(s) for ${endpoint}`
-        : `Cleared ${deletedCount} cache file(s) for ${library}-${version}`,
-      deletedFiles: matchingFiles
-    });
-
-  } catch (err) {
-    console.error("Error clearing cache:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-/**
- * ====================================================================
- * ROUTE: /api/searchMethod/cache-info
- * GET API
- * http://localhost:5050/api/searchMethod/cache-info?library=jackson-databind&version=2.17.2
- * ====================================================================
- * Get information about cached data
- */
-router.get("/cache-info", (req, res) => {
-  try {
-    const { library, version } = req.query;
-    
-    if (!library || !version) {
-      return res.status(400).json({ 
-        error: "library and version parameters are required" 
-      });
-    }
-
-    const cleanLibrary = library.includes(":") ? library.split(":").pop() : library;
-    const pattern = `${cleanLibrary}-${version}_`;
-    
-    const files = fs.readdirSync(CACHE_DIR);
-    const matchingFiles = files.filter(f => f.startsWith(pattern) && f.endsWith('.json'));
-    
-    const cacheInfo = matchingFiles.map(file => {
-      const filePath = path.join(CACHE_DIR, file);
-      const stats = fs.statSync(filePath);
-      
-      try {
-        const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        return {
-          filename: file,
-          size: `${(stats.size / 1024).toFixed(2)} KB`,
-          cachedAt: content.cachedAt || content.timestamp,
-          endpoint: file.replace(`${cleanLibrary}-${version}_`, '').replace('.json', '')
-        };
-      } catch {
-        return {
-          filename: file,
-          size: `${(stats.size / 1024).toFixed(2)} KB`,
-          error: "Could not read cache file"
-        };
-      }
-    });
-
-    const totalSize = matchingFiles.reduce((sum, file) => {
-      return sum + fs.statSync(path.join(CACHE_DIR, file)).size;
-    }, 0);
-
-    res.json({
-      library,
-      version,
-      totalCacheFiles: matchingFiles.length,
-      totalSize: `${(totalSize / 1024).toFixed(2)} KB`,
-      cacheDirectory: CACHE_DIR,
-      cacheFiles: cacheInfo
-    });
-
-  } catch (err) {
-    console.error("Error getting cache info:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+  res.json({
+    library: req.query.library,
+    version: lv.version,
+    totalMethods: comparisons.length,
+    comparisons,
+    winner: comparisons[0],
+    summary: {
+      message: `Most popular: ${comparisons[0].signature} with ${comparisons[0].usageCount} uses across ${comparisons[0].dependentCount} dependents`,
+    },
+  });
+}));
 
 module.exports = router;
