@@ -37,9 +37,10 @@ from pathlib import Path
 import duckdb
 
 from . import result_tables
+from .paths import RESULTS_DIR
 from .workspace import Workspace
 
-DEFAULT_RESULTS = Path(__file__).resolve().parents[2] / "data" / "results"
+DEFAULT_RESULTS = RESULTS_DIR
 
 
 def jar_packages(jar_path):

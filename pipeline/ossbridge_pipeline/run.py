@@ -24,6 +24,8 @@ results, even if some steps failed (see run.json), and 1 otherwise.
 
 import argparse
 import json
+import os
+import socket
 import sys
 import time
 import traceback
@@ -32,9 +34,10 @@ from pathlib import Path
 
 from . import api_coverage, candidates, collect, coverage, public_api, store_results
 from .coords import parse_release
+from .paths import INDEX_DIR
 from .workspace import DEFAULT_ROOT, Workspace
 
-DEFAULT_INDEX = Path(__file__).resolve().parents[2] / "data" / "dependents-index"
+DEFAULT_INDEX = INDEX_DIR
 
 STEPS = [
     ("dependents", "1 Dependents"),
@@ -48,6 +51,33 @@ STEPS = [
 
 class StepFailed(Exception):
     pass
+
+
+class RunLocked(Exception):
+    """Another run of the same library version is using the run folder."""
+
+
+def acquire_lock(ws):
+    """Create run.lock, or raise RunLocked if another run of this version holds it.
+
+    Two runs of one version would share the run folder (e.g. one deletes the source
+    checkout while the other builds it), so only one may run at a time.
+    """
+    ws.dir.mkdir(parents=True, exist_ok=True)
+    info = {"started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "host": socket.gethostname(), "pid": os.getpid()}
+    try:
+        fd = os.open(ws.lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            holder = json.loads(ws.lock_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            holder = {}
+        raise RunLocked(f"another run of {ws.library_ga}:{ws.version} is in progress (started "
+                        f"{holder.get('started_at', '?')} on {holder.get('host', '?')}). If no run is going on "
+                        f"(e.g. it was killed), delete {ws.lock_file} and start again.") from None
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(info, f)
 
 
 class Run:
@@ -96,14 +126,25 @@ class Run:
 
 def run_pipeline(library_ga, version, index=DEFAULT_INDEX, target=collect.DEFAULTS["target"],
                  top_target=collect.DEFAULTS["top_target"], max_tried=collect.DEFAULTS["max_tried"],
-                 fetch_missing=False, skip_coverage=False, keep_jars=False, timeout=coverage.DEFAULT_TIMEOUT,
+                 fetch_missing=False, skip_coverage=False, keep_jars=False, timeout=coverage.DEFAULT_TIMEOUT, jdk=None,
                  root=DEFAULT_ROOT, results_dir=store_results.DEFAULT_RESULTS, progress=None):
     """Run steps 1-7 for a library version; returns the run record (also in run.json)."""
     progress = progress or (lambda step, event, detail: None)
     ws = Workspace(library_ga, version, root=root)
     options = {"index": str(index), "target": target, "top_target": top_target, "max_tried": max_tried,
                "fetch_missing": fetch_missing, "skip_coverage": skip_coverage, "keep_jars": keep_jars,
-               "timeout": timeout}
+               "timeout": timeout, "jdk": jdk}
+    acquire_lock(ws)
+    try:
+        return _run_steps(ws, options, progress, index, target, top_target, max_tried, fetch_missing,
+                          skip_coverage, keep_jars, timeout, jdk, results_dir)
+    finally:
+        ws.lock_file.unlink(missing_ok=True)
+
+
+def _run_steps(ws, options, progress, index, target, top_target, max_tried, fetch_missing, skip_coverage,
+               keep_jars, timeout, jdk, results_dir):
+    library_ga, version = ws.library_ga, ws.version
     r = Run(ws, options, progress)
     r.save()
 
@@ -125,9 +166,10 @@ def run_pipeline(library_ga, version, index=DEFAULT_INDEX, target=collect.DEFAUL
     def test_coverage():
         if skip_coverage:
             raise StepFailed("skipped with --skip-coverage")
-        summary = coverage.run(ws, timeout=timeout,
+        summary = coverage.run(ws, timeout=timeout, only_jdk=jdk,
                                progress=lambda stage, detail: progress("coverage", "progress", f"{stage}: {detail}"))
         if summary["status"] != "ok":
+            r.record["steps"]["coverage"].update(attempts=summary["attempts"], hint=summary["hint"])
             raise StepFailed(f"coverage {summary['status']}: {summary['detail']}")
         return {k: summary[k] for k in ("repository", "tag", "build_tool", "jdk", "tests", "seconds")}
 
@@ -169,6 +211,7 @@ def main():
                         help="Add the library from Neo4j if it is not in the dependents index")
     parser.add_argument("--skip-coverage", action="store_true", help="Do not run the library's test suite")
     parser.add_argument("--keep-jars", action="store_true", help="Keep the selected dependents' jars")
+    parser.add_argument("--jdk", type=int, help="Build the library with this JDK only (e.g. 11)")
     parser.add_argument("--timeout", type=int, default=coverage.DEFAULT_TIMEOUT,
                         help="Seconds per test-suite build attempt")
     parser.add_argument("--results", default=str(store_results.DEFAULT_RESULTS), help="Results folder")
@@ -195,14 +238,23 @@ def main():
         text = {"start": "...", "ok": "done", "failed": f"FAILED: {detail}", "skipped": f"skipped ({detail})"}[event]
         print(f"{stamp} {titles[step]}: {text}", flush=True)
 
-    record = run_pipeline(f"{group}:{artifact}", version, index=args.index, target=args.target,
-                          top_target=args.top_target, max_tried=args.max_tried, fetch_missing=args.fetch_missing,
-                          skip_coverage=args.skip_coverage, keep_jars=args.keep_jars, timeout=args.timeout,
-                          results_dir=Path(args.results), progress=progress)
+    try:
+        record = run_pipeline(f"{group}:{artifact}", version, index=args.index, target=args.target,
+                              top_target=args.top_target, max_tried=args.max_tried,
+                              fetch_missing=args.fetch_missing, skip_coverage=args.skip_coverage,
+                              keep_jars=args.keep_jars, timeout=args.timeout, jdk=args.jdk,
+                              results_dir=Path(args.results), progress=progress)
+    except RunLocked as e:
+        sys.exit(f"Not started: {e}")
     print(f"\nRun {record['status']}: {Workspace(f'{group}:{artifact}', version).run_json}")
     collection = record["steps"]["collect"].get("summary")
     if collection:
         print(f"  {collection['message']}")
+    failed_coverage = record["steps"]["coverage"]
+    if failed_coverage.get("hint"):
+        for attempt in failed_coverage.get("attempts", []):
+            print(f"  JDK {attempt['jdk']} failed: {attempt['reason']}")
+        print(f"  {failed_coverage['hint']}")
     api_cov = record["steps"]["api_coverage"].get("summary")
     if api_cov:
         print(f"  API coverage: {api_cov['covered_pct']}% of {api_cov['apis']} APIs")

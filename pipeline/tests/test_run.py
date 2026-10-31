@@ -78,12 +78,16 @@ def test_no_dependents_skips_collection_but_runs_the_api_branch(steps, tmp_path)
 
 
 def test_failed_coverage_skips_api_coverage(steps, tmp_path):
-    steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None})
+    steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
+                    "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
+                    "hint": "Locally: pass --jdk N. If the problem persists, please report the library"})
     record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
     assert statuses(record)["coverage"] == "failed"
     assert record["steps"]["coverage"]["detail"] == "coverage build_failed: no tests ran"
     assert statuses(record)["api_coverage"] == "skipped"
     assert statuses(record)["store"] == "ok"
+    assert record["steps"]["coverage"]["attempts"][0]["jdk"] == 8
+    assert "--jdk" in record["steps"]["coverage"]["hint"]
 
 
 def test_skip_coverage_option(steps, tmp_path):
@@ -106,3 +110,19 @@ def test_failed_store_fails_the_run(steps, tmp_path):
     steps(store_results=FileNotFoundError("no library jar"))
     record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
     assert record["status"] == "failed"
+
+
+def test_a_second_run_of_the_same_version_is_refused(steps, tmp_path):
+    steps()
+    ws_dir = tmp_path / "org.example__lib@1.0"
+    ws_dir.mkdir()
+    (ws_dir / "run.lock").write_text('{"started_at": "2026-10-31T00:50:00+00:00", "host": "container-1"}')
+    with pytest.raises(run.RunLocked, match="in progress .*container-1.*delete .*run.lock"):
+        run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
+
+
+def test_lock_is_released_after_a_run_even_if_it_fails(steps, tmp_path):
+    steps(store_results=FileNotFoundError("no library jar"))
+    run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
+    assert not (tmp_path / "org.example__lib@1.0" / "run.lock").exists()
+    run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")   # can run again

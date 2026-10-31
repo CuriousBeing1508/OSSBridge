@@ -57,10 +57,10 @@ import requests
 
 from .coords import MAVEN_CENTRAL
 from .download_jars import download_library_jar
+from .paths import TOOLS_DIR
 from .workspace import Workspace
 
 JACOCO_VERSION = "0.8.12"
-TOOLS_DIR = Path(__file__).resolve().parents[2] / "data" / "tools"
 DEFAULT_TIMEOUT = 60 * 60   # seconds per build attempt
 
 TAG_PATTERNS = ["rel/{artifact}-{version}", "{artifact}-{version}", "v{version}", "{version}",
@@ -346,16 +346,68 @@ def installed_jdks():
 
 
 def jdk_order(release, available):
-    """JDKs to try: the lowest that can compile the release first, then the others ascending.
+    """JDKs to try, oldest first: the lowest that can compile the release, then newer ones.
 
-    A JDK can compile releases down to 7 (up to JDK 19) or 8 (JDK 20 and later).
+    When the release is unknown (e.g. set in a parent POM outside the repository),
+    all JDKs are tried from the oldest. A JDK can compile releases down to 7 (up to
+    JDK 19) or 8 (JDK 20 and later); a JDK that is too old usually fails at compilation,
+    within seconds.
     """
     release = release or 8
+
     def can_compile(jdk):
         return jdk >= release and (release >= 8 or jdk <= 19)
     usable = sorted(j for j in available if can_compile(j))
     rest = sorted(j for j in available if not can_compile(j) and j >= 8)
     return usable + rest
+
+
+# ---------------------------------------------------------------- failure messages
+
+ISSUES_URL = "https://github.com/CuriousBeing1508/OSSBridge/issues"
+
+# What to do when step 5 ends with this status: locally, then for everyone else
+HINTS = {
+    "no_repository": "No GitHub repository was found in the library's POM. Locally: pass --repo owner/name.",
+    "no_tag": "No release tag was found for this version. Locally: pass --tag <tag>.",
+    "clone_failed": "The repository could not be cloned. Check the network, or pass --repo / --tag.",
+    "no_build": "The project uses a build tool other than Maven or Gradle, which is not supported.",
+    "no_module": "No module of the repository builds this artifact. Locally: check --repo / --tag.",
+    "build_tool_missing": "Maven or Gradle is not installed. Locally: install it, or use the pipeline image.",
+    "no_jdk": "No JDK was found. Locally: install one, or set OSSBRIDGE_JDKS=\"17=/path/to/jdk17,...\".",
+    "build_failed": ("No JDK could build and test the library (see the reason per JDK in 'attempts'). "
+                     "Locally: install the JDK the project needs and pass --jdk N (or set OSSBRIDGE_JDKS), "
+                     "and check the build logs."),
+    "timeout": "The test suite did not finish in time. Locally: pass a larger --timeout (seconds).",
+    "no_coverage": "The tests ran but JaCoCo recorded nothing; the build may start tests in an unusual way.",
+    "report_failed": "The JaCoCo report could not be written; see 'detail'.",
+    "error": "An unexpected error occurred; see 'detail'.",
+}
+REPORT = f"If the problem persists, please report the library at {ISSUES_URL}"
+
+IGNORED_ERROR_LINES = ("Re-run Maven", "-> [Help", "For more information", "To see the full stack trace",
+                       "After correcting the problems", "mvn <args>", "[Help 1]")
+
+
+def first_error(log_file):
+    """The first meaningful error line of a build log, for telling the user why a JDK failed."""
+    try:
+        lines = Path(log_file).read_text(errors="ignore").splitlines()
+    except OSError:
+        return None
+    for i, line in enumerate(lines):
+        text = line.strip()
+        if text.startswith("[ERROR]"):
+            message = text[len("[ERROR]"):].strip()
+            if message and not any(message.startswith(x) or x in message for x in IGNORED_ERROR_LINES):
+                return message[:300]
+        if text == "* What went wrong:" and i + 1 < len(lines):      # Gradle
+            return lines[i + 1].strip()[:300]
+    return None
+
+
+def hint(status):
+    return f"{HINTS.get(status, HINTS['error'])} {REPORT}"
 
 
 # ---------------------------------------------------------------- JaCoCo
@@ -537,17 +589,20 @@ def run_build(steps, project_root, jdk_home, agent_options, log_file, timeout, p
 
 
 def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, keep_source=False,
-                     base_url=MAVEN_CENTRAL, progress=None):
+                     base_url=MAVEN_CENTRAL, progress=None, only_jdk=None):
     """Step 5; returns the coverage summary (also written to coverage.json).
 
     progress(stage, detail) is called as the run goes on (source, clone, build, tests, report).
+    only_jdk forces one JDK (major version) instead of trying them from the oldest. When there is
+    no coverage, summary["hint"] says what to do and summary["attempts"] why each JDK failed.
     """
     started = time.time()
     progress = progress or (lambda stage, detail: None)
     summary = {"library": workspace.library_ga, "version": workspace.version, "status": None,
                "repository": None, "tag": None, "module": None, "test_modules": [], "build_tool": None,
                "java_release": None,
-               "jdk": None, "jdks_tried": [], "tests": None, "jacoco": JACOCO_VERSION, "detail": ""}
+               "jdk": None, "jdks_tried": [], "attempts": [], "tests": None, "jacoco": JACOCO_VERSION,
+               "detail": "", "hint": None}
     workspace.coverage_dir.mkdir(parents=True, exist_ok=True)
     source_dir = workspace.coverage_dir / "source"
     exec_file = workspace.coverage_dir / "jacoco.exec"
@@ -570,7 +625,12 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
         summary["java_release"] = release
 
         jdks = installed_jdks()
-        order = jdk_order(release, jdks)
+        if only_jdk is not None:
+            if only_jdk not in jdks:
+                raise CoverageError("no_jdk", f"JDK {only_jdk} is not installed (found {sorted(jdks)})")
+            order = [only_jdk]
+        else:
+            order = jdk_order(release, jdks)
         if not order:
             raise CoverageError("no_jdk", f"no installed JDK (found {sorted(jdks)})")
         tools = jacoco_tools(base_url=base_url)
@@ -596,9 +656,12 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
                 summary["jdk"], summary["tests"] = jdk, counts
                 summary["log"] = log_file.name
                 break
+            reason = first_error(log_file) or "no tests ran"
+            summary["attempts"].append({"jdk": jdk, "reason": reason, "log": log_file.name})
+            progress("jdk", f"JDK {jdk} failed: {reason}")
         else:
             raise CoverageError("build_failed", f"no tests ran with JDK {', '.join(map(str, order))}; "
-                                                f"see {workspace.coverage_dir}/build-jdk*.log")
+                                                f"logs: {workspace.coverage_dir}/build-jdk*.log")
 
         if not exec_file.exists() or exec_file.stat().st_size == 0:
             raise CoverageError("no_coverage", "tests ran but JaCoCo recorded no execution data")
@@ -616,6 +679,8 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
     except (requests.RequestException, subprocess.TimeoutExpired, OSError) as e:
         summary["status"], summary["detail"] = "error", f"{type(e).__name__}: {e}"
     finally:
+        if summary["status"] != "ok":
+            summary["hint"] = hint(summary["status"])
         summary["seconds"] = round(time.time() - started)
         if not keep_source:
             shutil.rmtree(source_dir, ignore_errors=True)
@@ -636,6 +701,7 @@ def main():
     parser.add_argument("--tag", help="Release tag, if it cannot be found")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Seconds per build attempt")
     parser.add_argument("--keep-source", action="store_true", help="Keep the source checkout")
+    parser.add_argument("--jdk", type=int, help="Use only this JDK (major version, e.g. 11)")
     args = parser.parse_args()
 
     started = time.time()
@@ -651,12 +717,15 @@ def main():
         last_stage[0] = stage
 
     summary = run(Workspace(args.library, args.version), repo=args.repo, tag=args.tag,
-                  timeout=args.timeout, keep_source=args.keep_source, progress=progress)
+                  timeout=args.timeout, keep_source=args.keep_source, progress=progress, only_jdk=args.jdk)
     print("\n" if last_stage[0] == "tests" else "", end="")
     for key in ("status", "repository", "tag", "module", "test_modules", "build_tool", "java_release", "jdk", "jdks_tried",
                 "tests", "seconds", "detail"):
         print(f"  {key:<13}: {summary.get(key)}")
     if summary["status"] != "ok":
+        for attempt in summary["attempts"]:
+            print(f"  JDK {attempt['jdk']:<9}: {attempt['reason']}")
+        print(f"\n  {summary['hint']}")
         sys.exit(1)
 
 

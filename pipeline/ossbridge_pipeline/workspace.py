@@ -3,8 +3,9 @@
 from pathlib import Path
 
 from .coords import jar_file_name, safe_name
+from .paths import RUNS_DIR
 
-DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "data" / "runs"
+DEFAULT_ROOT = RUNS_DIR
 
 
 class Workspace:
@@ -17,6 +18,10 @@ class Workspace:
     @property
     def run_json(self):
         return self.dir / "run.json"
+
+    @property
+    def lock_file(self):
+        return self.dir / "run.lock"
 
     # Step 1: every dependent project, ranked (candidates.py)
     @property

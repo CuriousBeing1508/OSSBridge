@@ -122,7 +122,7 @@ def test_jdk_order():
     assert coverage.jdk_order(8, [21, 17, 23]) == [17, 21, 23]
     assert coverage.jdk_order(21, [17, 21, 23]) == [21, 23, 17]
     assert coverage.jdk_order(7, [17, 21]) == [17, 21]       # JDK 21 cannot compile release 7
-    assert coverage.jdk_order(None, [11, 17]) == [11, 17]
+    assert coverage.jdk_order(None, [17, 8, 21, 11]) == [8, 11, 17, 21]   # unknown release: oldest first
 
 
 def test_include_patterns(tmp_path):
@@ -207,3 +207,21 @@ def test_timeout_stops_the_whole_process_group(tmp_path):
     script.chmod(0o755)
     with open(tmp_path / "log", "w") as log:
         assert coverage.run_logged([str(script)], tmp_path, None, log, timeout=1) is None
+
+
+def test_first_error_skips_maven_boilerplate(tmp_path):
+    log = tmp_path / "build.log"
+    write(log, "[INFO] Building\n[ERROR] \n[ERROR] Failed to execute goal compile: Source option 7 is no longer "
+               "supported. Use 8 or later.\n[ERROR] -> [Help 1]\n")
+    assert coverage.first_error(log).startswith("Failed to execute goal compile: Source option 7")
+    write(log, "FAILURE: Build failed with an exception.\n\n* What went wrong:\nUnsupported class file major version 65\n")
+    assert coverage.first_error(log) == "Unsupported class file major version 65"
+    write(log, "[INFO] BUILD SUCCESS\n")
+    assert coverage.first_error(log) is None
+
+
+def test_every_failure_status_has_a_hint():
+    statuses = {"no_repository", "no_tag", "clone_failed", "no_build", "no_module", "build_tool_missing",
+                "no_jdk", "build_failed", "timeout", "no_coverage", "report_failed", "error"}
+    assert statuses <= set(coverage.HINTS)
+    assert "--jdk" in coverage.hint("build_failed") and coverage.ISSUES_URL in coverage.hint("build_failed")

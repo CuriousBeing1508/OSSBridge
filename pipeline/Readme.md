@@ -119,7 +119,8 @@ Run ok: .../data/runs/org.mybatis__mybatis@3.5.16/run.json
   failed, the reason. It is updated while the run goes on.
 - **Options:** `--target`, `--top-target`, `--max-tried` (collection loop),
   `--fetch-missing` (add the library from Neo4j if it is not in the dependents index),
-  `--skip-coverage`, `--timeout` (test suite), `--keep-jars`, `--index`, `--results`.
+  `--skip-coverage`, `--jdk` (build the library with this JDK only), `--timeout` (test
+  suite), `--keep-jars`, `--index`, `--results`.
 
 From Python: `run.run_pipeline(library_ga, version, progress=...)`.
 
@@ -300,10 +301,11 @@ changed:
    (`<artifact>-test`, `<artifact>-tests`, e.g. `guava-tests`); or the Gradle project.
    The installed Maven is used rather than the project's `mvnw`. If building only the
    module and what it depends on fails, the whole project is built (without tests).
-3. **JDK:** the lowest installed JDK that can build the Java release the POM asks for;
-   the next one is tried if no tests run. Builds for Java 7 or older are compiled as
-   Java 8. Installed JDKs are found automatically, or set
-   `OSSBRIDGE_JDKS="17=/path,21=/path"`.
+3. **JDK:** oldest first. The lowest installed JDK that can build the Java release the
+   POM asks for is tried first (all JDKs from the oldest when the POM does not say), and
+   the next newer one when no tests run; a JDK that is too old usually fails within
+   seconds. Builds for Java 7 or older are compiled as Java 8. `--jdk N` uses only that
+   JDK. Installed JDKs are found automatically, or set `OSSBRIDGE_JDKS="17=/path,21=/path"`.
 4. **Coverage:** the JaCoCo agent is attached through `JAVA_TOOL_OPTIONS`, so every test
    JVM records coverage whatever the build configures, for the library's packages only.
    Checks unrelated to tests (license, style, enforcer, javadoc, ...) are skipped and
@@ -314,6 +316,12 @@ changed:
 (`--timeout`, default 60 minutes), `no_coverage` or `report_failed`. The source checkout
 is deleted afterwards (`--keep-source` keeps it). A timeout stops the build and every
 test JVM it started. From Python: `coverage.run(Workspace(library, version), progress=...)`.
+
+When there is no coverage, `coverage.json` also has `attempts` (each JDK tried and the
+first error in its build log) and `hint` (what to do: e.g. install the JDK the project
+needs and pass `--jdk N`, or pass `--tag`, `--repo` or `--timeout`; otherwise report the
+library at https://github.com/CuriousBeing1508/OSSBridge/issues). Both commands print
+them at the end.
 
 The command prints its progress (source, clone, JDK, build commands, test classes done,
 report) with the elapsed time; the full build output is in

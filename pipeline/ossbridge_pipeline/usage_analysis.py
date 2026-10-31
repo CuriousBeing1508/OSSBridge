@@ -38,12 +38,14 @@ USAGE_COLUMNS = ["dependent_jar", "category", "target_class", "target_member", "
 SUMMARY_COLUMNS = ["dependent_jar", "status", "classes", "bundled_library_classes",
                    "bytecode_instructions", "usage_rows", "detail"]
 
-DEFAULT_ANALYZER = (Path(__file__).resolve().parents[1] / "JavaUsageExtractor" / "asm-based-analysis"
-                    / "target" / "ossbridge-usage-analyzer.jar")
+# OSSBRIDGE_USAGE_ANALYZER (set in the pipeline image), else the Maven build output
+DEFAULT_ANALYZER = Path(os.environ.get("OSSBRIDGE_USAGE_ANALYZER") or
+                        Path(__file__).resolve().parents[1] / "JavaUsageExtractor" / "asm-based-analysis"
+                        / "target" / "ossbridge-usage-analyzer.jar")
 
 
 def analyzer_jar():
-    path = Path(os.environ.get("OSSBRIDGE_USAGE_ANALYZER", DEFAULT_ANALYZER))
+    path = Path(os.environ.get("OSSBRIDGE_USAGE_ANALYZER") or DEFAULT_ANALYZER)
     if not path.exists():
         raise FileNotFoundError(f"Usage analyzer not found at {path}; build it with ./mvnw package "
                                 f"in JavaUsageExtractor/asm-based-analysis")

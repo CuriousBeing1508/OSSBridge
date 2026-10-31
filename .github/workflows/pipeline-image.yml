@@ -1,0 +1,56 @@
+# Builds the pipeline image (pipeline/Dockerfile), runs the tests inside it, and on
+# main publishes it to the GitHub Container Registry:
+#   ghcr.io/<owner>/ossbridge-pipeline:latest and :sha-<commit>
+name: Pipeline image
+
+on:
+  push:
+    branches: [main]
+    paths: ["pipeline/**", ".github/workflows/pipeline-image.yml"]
+  pull_request:
+    paths: ["pipeline/**", ".github/workflows/pipeline-image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: pipeline
+          load: true
+          tags: ossbridge-pipeline:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the tests in the image
+        run: >
+          docker run --rm --entrypoint python ossbridge-pipeline:test
+          -m pytest -q -p no:cacheprovider tests DependentsIndex/tests Results/tests
+
+      - name: Log in to the GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the image
+        if: github.event_name != 'pull_request'
+        run: |
+          image="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/ossbridge-pipeline"
+          docker tag ossbridge-pipeline:test "$image:latest"
+          docker tag ossbridge-pipeline:test "$image:sha-${GITHUB_SHA::12}"
+          docker push "$image:latest"
+          docker push "$image:sha-${GITHUB_SHA::12}"
