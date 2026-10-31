@@ -7,13 +7,15 @@ services:
       - "${NEO4J_BOLT_PORT:-7687}:7687"
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-Password1}
-      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP:-4G}
-      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-4G}
+      # Heap plus page cache must fit in the Docker VM's memory (8 GB by default
+      # on Docker Desktop); raise both if the VM has more.
+      - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP:-2G}
+      - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-3G}
     volumes:
       - goblin-data:/data
       - goblin-dumps:/dumps
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:7474 || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
       interval: 30s
       retries: 10
       start_period: 2h

@@ -1,13 +1,10 @@
-
-backend/node_modules
-frontend/node_modules
+**/node_modules
 frontend/build
-.env
+**/.env
+**/.env.*
 .git
 README.md
 .DS_Store
-node_modules
-npm-debug.log
+**/*.log
 Dataset
 .md
-

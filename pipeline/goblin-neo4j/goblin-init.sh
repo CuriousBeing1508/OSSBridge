@@ -12,7 +12,7 @@ if [ ! -f "$MARKER" ]; then
     mkdir -p /dumps
     if [ ! -f "$DUMP.verified" ]; then
         echo "[goblin] Downloading Maven Central dump (4.8 GB) from $DUMP_URL"
-        curl -fL -C - --retry 5 --retry-delay 10 -o "$DUMP" "$DUMP_URL"
+        wget --continue --tries=5 --waitretry=10 --progress=dot:giga -O "$DUMP" "$DUMP_URL"
         echo "[goblin] Verifying checksum"
         echo "$DUMP_MD5  $DUMP" | md5sum -c -
         touch "$DUMP.verified"

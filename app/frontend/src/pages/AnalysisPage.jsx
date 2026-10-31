@@ -373,15 +373,16 @@ import Header from "../components/Header";
 import { useLibrary } from "../context/LibraryContext";
 import MethodSearchButton from "../components/MethodSearchButton";
 import API_BASE_URL from '../services/api';
+import { pageParam, pageUrl } from "../utils/pageUrl";
 
 const AnalysisPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   
   const { library: contextLibrary, setLibrary, setVersion } = useLibrary();
-  const stateLibrary = location.state?.library;
-  const stateVersion = location.state?.version;
-  
+  const stateLibrary = pageParam(location, "library");
+  const stateVersion = pageParam(location, "version");
+
   const library = stateLibrary || contextLibrary;
 
   console.log("🎯 AnalysisPage mounted!");
@@ -469,8 +470,8 @@ const AnalysisPage = () => {
     setSelectedVersion(version);
     setVersion(version);
     // Automatically navigate to maintainer summary when version is selected
-    navigate("/analysisV2/maintainer-summary", { 
-      state: { library, version } 
+    navigate(pageUrl("/analysisV2/maintainer-summary", { library, version }), {
+      state: { library, version }
     });
   };
 
@@ -674,7 +675,7 @@ const AnalysisPage = () => {
                       key={i}
                       onClick={() => {
                         console.log("🚀 Navigating to dependent with:", { library, version: selectedVersion, dependent: d.dependent });
-                        navigate("/analysisV2/dependent", {
+                        navigate(pageUrl("/analysisV2/dependent", { library, version: selectedVersion, dependent: d.dependent }), {
                           state: { library, version: selectedVersion, dependent: d.dependent },
                         });
                       }}

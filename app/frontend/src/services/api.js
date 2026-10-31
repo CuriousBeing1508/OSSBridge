@@ -4,9 +4,11 @@ import axios from "axios";
 
 // ====================================================================
 // API CONFIGURATION
-// Works in both development (localhost) and production (Docker)
+// Development: the backend on localhost:5050. Docker and the Hugging Face
+// Space build with REACT_APP_API_URL="", so /api is requested from the
+// address the page was served from.
 // ====================================================================
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5050';
+const API_BASE_URL = process.env.REACT_APP_API_URL ?? 'http://localhost:5050';
 
 console.log('[INFO] API Base URL:', API_BASE_URL);
 

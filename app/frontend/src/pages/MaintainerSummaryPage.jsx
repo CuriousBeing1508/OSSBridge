@@ -19,6 +19,7 @@ import { useLibrary } from "../context/LibraryContext";
 
 import MethodSearchButton from "../components/MethodSearchButton";
 import API_BASE_URL from '../services/api';
+import { pageParam, pageUrl } from "../utils/pageUrl";
 const COLORS = [
   "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
   "#EC4899", "#14B8A6", "#F97316", "#22C55E", "#6366F1"
@@ -29,8 +30,8 @@ const MaintainerSummaryPage = () => {
   const navigate = useNavigate();
 
   const { library: contextLibrary, version: contextVersion, setLibrary, setVersion } = useLibrary();
-  const stateLibrary = location.state?.library;
-  const stateVersion = location.state?.version;
+  const stateLibrary = pageParam(location, "library");
+  const stateVersion = pageParam(location, "version");
 
   const library = stateLibrary || contextLibrary;
   const version = stateVersion || contextVersion;
@@ -171,7 +172,7 @@ const MaintainerSummaryPage = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-3">
           <button
-            onClick={() => navigate("/analysisV2", { state: { library, version } })}
+            onClick={() => navigate(pageUrl("/analysisV2", { library, version }), { state: { library, version } })}
             className="mb-4 text-gray-600 hover:text-gray-800 flex items-center"
           >
             ← Back to Analysis

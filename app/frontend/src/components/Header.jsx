@@ -1,6 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useLibrary } from "../context/LibraryContext";
+import { pageUrl } from "../utils/pageUrl";
 
 const Header = ({ currentPage = "home" }) => {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ const Header = ({ currentPage = "home" }) => {
         navigate("/");
         return;
       }
-      navigate(path, { state: { library, version } });
+      navigate(pageUrl(path, { library, version }), { state: { library, version } });
     } else {
       navigate(path);
     }

@@ -192,6 +192,7 @@ import { useNavigate } from "react-router-dom";
 import React, { useState } from "react";
 import { searchLibraries } from "../services/api";
 import Header from "../components/Header";
+import { pageUrl } from "../utils/pageUrl";
 import { useLibrary } from "../context/LibraryContext";
 import "../index.css";
 
@@ -238,7 +239,7 @@ const HomePage = () => {
       alert("Please select a library first");
       return;
     }
-    navigate("/analysisV2", {
+    navigate(pageUrl("/analysisV2", { library: selectedLib }), {
       state: { library: selectedLib },
       replace: true
     });

@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import API_BASE_URL from '../services/api';
+import { pageParam, pageUrl } from "../utils/pageUrl";
 
 const COLORS = [
   "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
@@ -21,7 +22,9 @@ const COLORS = [
 const DependentDetailPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { library, dependent, version: stateVersion } = location.state || {};
+  const library = pageParam(location, "library");
+  const dependent = pageParam(location, "dependent");
+  const stateVersion = pageParam(location, "version");
   
   const [versions, setVersions] = useState([]);
   const [selectedVersion, setSelectedVersion] = useState(stateVersion || "");
@@ -165,7 +168,7 @@ const DependentDetailPage = () => {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between mb-3">
             <button
-              onClick={() => navigate("/analysisV2", { state: { library, version: selectedVersion } })}
+              onClick={() => navigate(pageUrl("/analysisV2", { library, version: selectedVersion }), { state: { library, version: selectedVersion } })}
               className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition"
             >
               ← Back to Analysis

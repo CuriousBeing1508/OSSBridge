@@ -3,7 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-ENV REACT_APP_API_URL=http://localhost:5050
+# Empty: the page requests /api from its own address, which nginx passes to the backend
+ENV REACT_APP_API_URL=""
 RUN npm run build
 
 FROM nginx:alpine
