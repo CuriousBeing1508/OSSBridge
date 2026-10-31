@@ -1,0 +1,149 @@
+# Analyzes one library version with the pipeline image and publishes the results to the
+# Hugging Face dataset. Start it from Actions > Analyze library > Run workflow.
+#
+# Each pipeline step is a workflow step (python -m ossbridge_pipeline.run --step ...), all
+# recorded in one run.json. A failed step is shown as failed but does not stop the others;
+# steps that need its output are skipped, and the results that exist are stored and published.
+# The run summary shows a table of the steps; run.json, the summaries and the build logs are
+# attached as an artifact.
+#
+# Needs the repository secret HF_TOKEN (write access to the dataset) to publish.
+name: Analyze library
+run-name: Analyze ${{ inputs.release }}${{ inputs.request_id != '' && format(' [{0}]', inputs.request_id) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Library version as groupId:artifactId:version (e.g. org.slf4j:slf4j-api:2.0.13)"
+        required: true
+        type: string
+      target:
+        description: "Dependents that use the library to select"
+        default: "400"
+        type: string
+      top_target:
+        description: "How many of them in order of reach (the rest at random); 0 while the index has no reach"
+        default: "0"
+        type: string
+      jdk:
+        description: "Build the library with this JDK only (8, 11, 17 or 21); empty: try them from the oldest"
+        default: ""
+        type: string
+      skip_coverage:
+        description: "Do not run the library's test suite"
+        default: false
+        type: boolean
+      publish:
+        description: "Publish the results to the Hugging Face dataset"
+        default: true
+        type: boolean
+      request_id:
+        description: "Optional id shown in the run name, so the app can find this run"
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+# One analysis per library version at a time; a second request waits
+concurrency:
+  group: analyze-${{ inputs.release }}
+  cancel-in-progress: false
+
+env:
+  DATASET: rachna1508/ossbridge-results
+  # Inputs reach the shell only through environment variables
+  RELEASE: ${{ inputs.release }}
+  TARGET: ${{ inputs.target }}
+  TOP_TARGET: ${{ inputs.top_target }}
+  JDK: ${{ inputs.jdk }}
+  SKIP_COVERAGE: ${{ inputs.skip_coverage }}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Check the inputs
+        run: |
+          if ! [[ "$RELEASE" =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+$ ]]; then
+            echo "Not a groupId:artifactId:version coordinate: $RELEASE"; exit 1
+          fi
+          [[ "$TARGET" =~ ^[0-9]+$ && "$TOP_TARGET" =~ ^[0-9]+$ ]] || { echo "target and top_target must be numbers"; exit 1; }
+          [[ -z "$JDK" || "$JDK" =~ ^(8|11|17|21)$ ]] || { echo "jdk must be 8, 11, 17, 21 or empty"; exit 1; }
+          args="--target $TARGET --top-target $TOP_TARGET --timeout 2700"
+          [[ -n "$JDK" ]] && args="$args --jdk $JDK"
+          [[ "$SKIP_COVERAGE" == "true" ]] && args="$args --skip-coverage"
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE=ghcr.io/$owner/ossbridge-pipeline:latest" >> "$GITHUB_ENV"
+          echo "RUN_ARGS=$args" >> "$GITHUB_ENV"
+          # The container runs as a non-root user: its folders must be writable
+          mkdir -p data m2 && chmod 777 data m2
+
+      - name: Get the pipeline image
+        run: docker pull "$IMAGE"
+
+      - name: Restore the Maven download cache
+        uses: actions/cache@v4
+        with:
+          path: m2
+          key: maven-${{ github.run_id }}
+          restore-keys: maven-
+
+      - name: Download the dependents index and published results
+        run: |
+          chmod -R a+rwX m2
+          docker run --rm -v "$PWD/data:/data" --entrypoint python "$IMAGE" \
+            -m ossbridge_pipeline.publish --download --repo "$DATASET"
+
+      - name: 1 Dependents
+        continue-on-error: true
+        run: docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --step dependents $RUN_ARGS
+
+      - name: 2-3 Download and analyze dependents
+        continue-on-error: true
+        run: docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --step collect $RUN_ARGS
+
+      - name: 4 Library API
+        continue-on-error: true
+        run: docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --step api $RUN_ARGS
+
+      - name: 5 Test coverage
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD/data:/data" -v "$PWD/m2:/home/ossbridge/.m2" \
+            "$IMAGE" "$RELEASE" --step coverage $RUN_ARGS
+
+      - name: 6 API coverage
+        continue-on-error: true
+        run: docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --step api_coverage $RUN_ARGS
+
+      - name: 7 Store results
+        run: docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --step store $RUN_ARGS
+
+      - name: Publish to Hugging Face
+        if: inputs.publish
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [[ -z "$HF_TOKEN" ]]; then
+            echo "The repository secret HF_TOKEN is missing (Settings > Secrets and variables > Actions)"; exit 1
+          fi
+          docker run --rm -v "$PWD/data:/data" -e HF_TOKEN --entrypoint python "$IMAGE" \
+            -m ossbridge_pipeline.publish --no-index --repo "$DATASET" --message "Analyze $RELEASE"
+
+      - name: Run summary
+        if: always()
+        run: |
+          docker run --rm -v "$PWD/data:/data" "$IMAGE" "$RELEASE" --report >> "$GITHUB_STEP_SUMMARY" \
+            || echo "No run record was written for $RELEASE." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach run.json, summaries and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}
+          path: data/runs/
+          if-no-files-found: ignore
+          retention-days: 30
