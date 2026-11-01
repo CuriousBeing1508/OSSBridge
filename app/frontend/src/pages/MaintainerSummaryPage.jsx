@@ -569,8 +569,11 @@ const MaintainerSummaryPage = () => {
                       </span>
                     </div>
                     <div className="text-sm text-gray-600 font-semibold mb-2">Overall Project Coverage</div>
+                    {/* null when the version's results have no project totals */}
                     <div className="text-5xl font-bold text-gray-700 mb-3">
-                      {testCoverageData.overallProjectCoverage}%
+                      {testCoverageData.overallProjectCoverage == null
+                        ? <span className="text-2xl">Not recorded</span>
+                        : `${testCoverageData.overallProjectCoverage}%`}
                     </div>
                     <div className="text-sm text-gray-600 mb-3">
                       All methods (including internal)

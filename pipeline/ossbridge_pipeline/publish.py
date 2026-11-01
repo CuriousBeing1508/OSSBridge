@@ -131,7 +131,9 @@ Columns:
 {columns}
 
 `dependents-index/` holds the index of which projects depend on which library version
-that the pipeline selects dependents from (`edges.parquet`, `reach.parquet`).
+that the pipeline selects dependents from: `edges.parquet` (every dependency in the Goblin
+graph of Maven Central) and `reach.parquet` (for each artifact, the number of distinct
+artifacts that depend on any of its versions).
 
 ## How the data is produced
 
@@ -156,8 +158,8 @@ Every downloaded jar's SHA-256 and the analyzer's SHA-256 are kept in the run su
 
 - Dependents come from a snapshot of Maven Central (Goblin, 30 August 2024); releases after
   it have no dependents in the index.
-- The current index was built from earlier exports and has no reach values, so the top
-  tier is empty and all dependents were selected at random.
+- Versions analyzed before the index had reach values (31 October 2026) selected all
+  dependents at random; each run's settings, including `top_target`, are in `runs`.
 - Test coverage needs a GitHub repository with a release tag and a Maven or Gradle build;
   `coverage_status` says why when there is none.
 - Versions converted from the original dataset have no deprecation or override

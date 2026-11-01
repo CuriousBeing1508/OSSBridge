@@ -277,8 +277,8 @@ router.get("/api-surface-usage", handle("api-surface-usage", async (req, res) =>
     usagePercentage,
     topUnusedApis: unused.slice(0, 50).map(describe),
     topUsedApis: used.slice(0, 50).map(describe),
-    // read by the maintainer summary page
-    unusedApis: unused.slice(0, 50).map(describe),
+    // read by the maintainer summary page, which lists them as text
+    unusedApis: unused.slice(0, 50).map((g) => g.signature),
     message,
     summary: {
       message,

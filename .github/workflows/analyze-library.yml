@@ -23,8 +23,8 @@ on:
         default: "400"
         type: string
       top_target:
-        description: "How many of them in order of reach (the rest at random); 0 while the index has no reach"
-        default: "0"
+        description: "How many of them in order of reach (the rest at random)"
+        default: "300"
         type: string
       jdk:
         description: "Build the library with this JDK only (8, 11, 17 or 21); empty: try them from the oldest"
