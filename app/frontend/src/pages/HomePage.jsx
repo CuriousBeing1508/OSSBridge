@@ -322,6 +322,7 @@ const HomePage = () => {
               {!loading && searched && libraries.length === 0 && !selectedLib && (
                 <p className="text-gray-500 py-6 text-center">
                   No library matches "{searchQuery}". Try a groupId or artifactId, for example jackson-databind.
+                  Note that we exclude libraries for which no direct dependent projects are found.
                 </p>
               )}
 
