@@ -16,22 +16,63 @@
 //   api_methods  methods and constructors of the library with their test coverage;
 //                signature = <package>.<Class>.<member> groups the overloads
 //                (one "API" in the routes' counts, as in the old dataset)
+//
+// INDEX_PATH is the dependents index (local folder or Hugging Face dataset), e.g.
+//   INDEX_PATH=hf://datasets/rachna1508/ossbridge-results/dependents-index
+// Its summaries list every library and version on Maven Central in the Goblin
+// snapshot, analyzed or not:
+//   index_libraries  library_ga, versions, dependents, reach
+//   index_versions   library_ga, library_version, dependents
+// Without them the app lists only the analyzed versions.
 
 const path = require("path");
 const { DuckDBInstance } = require("@duckdb/node-api");
 
 const RESULTS_PATH = process.env.RESULTS_PATH ||
   path.resolve(__dirname, "../../../data/results");
+const INDEX_PATH = process.env.INDEX_PATH ||
+  path.resolve(__dirname, "../../../data/dependents-index");
 
 const TABLES = ["library_versions", "apis", "dependents", "api_usage", "api_coverage"];
 
 let connection = null;
 let loading = null;
 let loadedAt = null;
+let index = { available: false, snapshot: null };
+
+function root(base) {
+  return (base.includes("://") ? base : path.resolve(base)).replace(/\/$/, "");
+}
 
 function source(table) {
-  const root = RESULTS_PATH.includes("://") ? RESULTS_PATH : path.resolve(RESULTS_PATH);
-  return `${root.replace(/\/$/, "")}/${table}/*.parquet`;
+  return `${root(RESULTS_PATH)}/${table}/*.parquet`;
+}
+
+function quoted(file) {
+  return `'${file.replace(/'/g, "''")}'`;
+}
+
+/** Loads the index summaries; empty tables when the index has none. */
+async function loadIndex(con) {
+  const base = root(INDEX_PATH);
+  try {
+    await con.run(`CREATE TABLE index_libraries AS SELECT * FROM read_parquet(${quoted(`${base}/libraries.parquet`)})`);
+    await con.run(`CREATE TABLE index_versions AS SELECT * FROM read_parquet(${quoted(`${base}/versions.parquet`)})`);
+  } catch (err) {
+    console.log(`[INFO] No dependents index summaries at ${base}; listing analyzed versions only (${err.message.split("\n")[0]})`);
+    await con.run("CREATE OR REPLACE TABLE index_libraries (library_ga VARCHAR, versions BIGINT, dependents BIGINT, reach BIGINT)");
+    await con.run("CREATE OR REPLACE TABLE index_versions (library_ga VARCHAR, library_version VARCHAR, dependents BIGINT)");
+    return { available: false, snapshot: null };
+  }
+  let snapshot = null;
+  try {
+    const reader = await con.runAndReadAll(
+      `SELECT CAST(source.snapshot AS VARCHAR) AS snapshot FROM read_json_auto(${quoted(`${base}/manifest.json`)})`);
+    snapshot = reader.getRowObjectsJS()[0]?.snapshot ?? null;
+  } catch (err) {
+    // The manifest only adds the snapshot date
+  }
+  return { available: true, snapshot };
 }
 
 async function load() {
@@ -67,6 +108,7 @@ async function load() {
     FROM apis a
     LEFT JOIN api_coverage c USING (library_ga, version, api_id)
     WHERE a.kind IN ('method', 'constructor')`);
+  index = await loadIndex(con);
   return con;
 }
 
@@ -76,6 +118,7 @@ async function reload() {
     connection = con;
     loadedAt = new Date().toISOString();
     console.log(`[INFO] Result tables loaded from ${RESULTS_PATH}`);
+    if (index.available) console.log(`[INFO] Dependents index summaries loaded from ${INDEX_PATH}`);
     return con;
   });
   try {
@@ -121,7 +164,10 @@ async function resolveLibrary(library) {
   return rows.length ? rows[0].library_ga : null;
 }
 
-/** Numeric-aware version order: 2.9 before 2.10. */
+/**
+ * Numeric-aware version order: 2.9 before 2.10, and a release after its
+ * qualified builds (2.0.0-M1 and 2.0.0-RC1 before 2.0.0, 2.0.0 before 2.0.0.1).
+ */
 function compareVersions(a, b) {
   const pa = a.split(/[.\-]/);
   const pb = b.split(/[.\-]/);
@@ -130,6 +176,11 @@ function compareVersions(a, b) {
     const y = pb[i] ?? "";
     const nx = /^\d+$/.test(x) ? Number(x) : NaN;
     const ny = /^\d+$/.test(y) ? Number(y) : NaN;
+    // One version ends here: it is older than a further number, newer than a qualifier
+    if (x === "" && y !== "") return Number.isNaN(ny) ? 1 : -1;
+    if (y === "" && x !== "") return Number.isNaN(nx) ? -1 : 1;
+    // A number is newer than a qualifier (2.0.0.1 after 2.0.0-M1)
+    if (Number.isNaN(nx) !== Number.isNaN(ny)) return Number.isNaN(nx) ? -1 : 1;
     if (!Number.isNaN(nx) && !Number.isNaN(ny)) {
       if (nx !== ny) return nx - ny;
     } else if (x !== y) {
@@ -162,6 +213,9 @@ async function libraryVersion(req, res) {
 
 module.exports = {
   RESULTS_PATH,
+  INDEX_PATH,
+  TABLES,
+  index: () => index,
   query,
   reload,
   resolveLibrary,

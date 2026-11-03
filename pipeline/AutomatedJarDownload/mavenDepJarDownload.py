@@ -77,8 +77,8 @@ def main():
         logging.error(f"CSV file not found: {args.csv_file}")
         sys.exit(1)
 
-    logging.info(f"→ Reading dependencies from: {args.csv_file}")
-    logging.info(f"→ Saving JARs into: {download_dir}")
+    logging.info(f"Reading dependencies from: {args.csv_file}")
+    logging.info(f"Saving JARs into: {download_dir}")
 
     # Stats
     downloaded = 0

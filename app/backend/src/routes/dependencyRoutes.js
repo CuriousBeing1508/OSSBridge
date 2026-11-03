@@ -1,5 +1,6 @@
 const express = require("express");
 const results = require("../results");
+const { GA, mavenReleases, releaseDates } = require("../mavenCentral");
 
 const router = express.Router();
 
@@ -15,7 +16,18 @@ router.get("/test-dataset", async (req, res) => {
   }
 });
 
-// Search libraries by keyword: groupId:artifactId of the libraries with results
+// Every library: the ones in the dependents index and the ones with results
+const ALL_LIBRARIES = `
+  SELECT coalesce(i.library_ga, a.library_ga) AS library,
+         coalesce(a.analyzed, 0) AS "analyzedVersions",
+         coalesce(i.versions, 0) AS "indexVersions",
+         i.dependents, i.library_ga IS NOT NULL AS "inIndex"
+  FROM index_libraries i
+  FULL JOIN (SELECT library_ga, count(*) AS analyzed FROM library_versions GROUP BY 1) a
+    USING (library_ga)`;
+
+// Search libraries by keyword in groupId:artifactId, analyzed ones first, then by
+// number of dependent projects; at most 50
 // http://localhost:5050/api/dependencies/search?query=jackson
 router.get("/search", async (req, res) => {
   try {
@@ -23,9 +35,90 @@ router.get("/search", async (req, res) => {
     if (!query) return res.status(400).json({ error: "Query required" });
 
     const rows = await results.query(`
-      SELECT DISTINCT library_ga FROM library_versions
-      WHERE contains(lower(library_ga), lower($query)) ORDER BY library_ga`, { query });
-    res.json(rows.map((r) => r.library_ga));
+      SELECT * FROM (${ALL_LIBRARIES})
+      WHERE contains(lower(library), lower($query))
+      ORDER BY "analyzedVersions" > 0 DESC,
+               lower(split_part(library, ':', 2)) = lower($query) DESC,
+               dependents DESC NULLS LAST, library
+      LIMIT 50`, { query });
+
+    // A groupId:artifactId that is not in the index (e.g. first released after the
+    // snapshot) is listed when Maven Central has it
+    const ga = query.trim();
+    if (GA.test(ga) && !rows.some((r) => r.library === ga)) {
+      const releases = await mavenReleases(ga);
+      if (releases && releases.length) {
+        rows.unshift({ library: ga, analyzedVersions: 0, indexVersions: 0, dependents: null,
+                       inIndex: false, mavenVersions: releases.length });
+      }
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// All versions of a library, newest first, each marked analyzed or not:
+//   - releases on Maven Central (maven-metadata.xml), with their number of dependent
+//     projects in the dependents index (none for releases after the snapshot);
+//   - analyzed versions.
+// Versions dependents declared that are not releases are left out. Without Maven
+// Central, the dependents index versions are listed. Each version has its release
+// date from deps.dev when known, and afterSnapshot when it was released after the
+// snapshot, so its dependents are not in the index yet.
+// http://localhost:5050/api/dependencies/library?library=org.slf4j:slf4j-api
+router.get("/library", async (req, res) => {
+  try {
+    const { library } = req.query;
+    if (!library) return res.status(400).json({ error: "Library required" });
+
+    let [match] = await results.query(`
+      SELECT library FROM (${ALL_LIBRARIES})
+      WHERE library = $library OR split_part(library, ':', 2) = $library
+      ORDER BY library = $library DESC, "analyzedVersions" DESC, dependents DESC NULLS LAST
+      LIMIT 1`, { library });
+    const { available, snapshot } = results.index();
+    if (!match && GA.test(library) && (await mavenReleases(library))?.length) {
+      match = { library };
+    }
+    if (!match) {
+      return res.status(404).json({
+        error: available
+          ? `${library} is not in the dependents index (Maven Central snapshot of ${snapshot}) and has no results`
+          : `No results for ${library}`,
+        snapshot,
+      });
+    }
+
+    const rows = await results.query(`
+      SELECT coalesce(i.library_version, a.version) AS version, i.dependents,
+             a.version IS NOT NULL AS analyzed, i.library_version IS NOT NULL AS "inIndex"
+      FROM (SELECT * FROM index_versions WHERE library_ga = $ga) i
+      FULL JOIN (SELECT version FROM library_versions WHERE library_ga = $ga) a
+        ON a.version = i.library_version`, { ga: match.library });
+
+    const [releases, dates] = await Promise.all(
+      [mavenReleases(match.library), releaseDates(match.library)]);
+    let versions = rows;
+    if (releases && releases.length) {
+      const known = new Set(rows.map((r) => r.version));
+      const released = new Set(releases);
+      versions = rows.filter((r) => r.analyzed || released.has(r.version))
+        .concat(releases.filter((v) => !known.has(v))
+          .map((version) => ({ version, dependents: null, analyzed: false, inIndex: false })));
+    }
+    for (const v of versions) {
+      v.released = dates?.get(v.version) ?? null;
+      v.afterSnapshot = Boolean(!v.inIndex && snapshot && v.released && v.released > snapshot);
+    }
+    versions.sort((x, y) => results.compareVersions(y.version, x.version));
+    res.json({
+      library: match.library,
+      indexAvailable: available,
+      snapshot,
+      mavenCentral: Boolean(releases && releases.length),
+      versions,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

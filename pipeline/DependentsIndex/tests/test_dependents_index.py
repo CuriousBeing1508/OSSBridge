@@ -35,6 +35,9 @@ def index(tmp_path):
         (LIB, "1.0", None, "org.small:b:1.0", 100),
         (LIB, "1.0", None, "net.other:c:2.0", 100),
         (LIB, "2.0", "compile", "com.acme:core:2.0", 400),
+        # declared versions that are not releases: in the edges, not in the summaries
+        (LIB, "[1.0,2)", "compile", "org.range:user:1.0", 100),
+        (LIB, "3.0-SNAPSHOT", "compile", "org.range:user:1.1", 100),
         # com.acme:core is itself depended on by two projects -> reach 2
         ("com.acme:core", "1.1", "compile", "x.y:user1:1.0", 100),
         ("com.acme:core", "1.1", "compile", "x.y:user2:1.0", 100),
@@ -50,12 +53,52 @@ def index(tmp_path):
 
 def test_finalize_dedupes_and_computes_reach(index):
     out, manifest = index
-    assert manifest["edges"] == 11
+    assert manifest["edges"] == 13
     assert manifest["libraries"] == 2
 
     import duckdb
     reach = dict(duckdb.sql(f"SELECT ga, reach FROM '{out}/reach.parquet'").fetchall())
-    assert reach == {LIB: 5, "com.acme:core": 2}
+    assert reach == {LIB: 6, "com.acme:core": 2}
+
+
+def test_release_timestamps_are_kept_apart_from_the_edges(index):
+    out, _ = index
+    import duckdb
+    import pyarrow.parquet as pq
+    assert "release_ts" not in pq.read_schema(out / "edges.parquet").names
+    releases = duckdb.sql(f"SELECT * FROM '{out}/releases.parquet' "
+                          "WHERE dependent_ga = 'com.acme:core'").fetchall()
+    assert releases == [("com.acme:core", "1.0", 100), ("com.acme:core", "1.1", 300),
+                        ("com.acme:core", "1.2", 200), ("com.acme:core", "2.0", 400)]
+
+
+def test_split_releases_converts_an_old_index(index):
+    out, _ = index
+    import duckdb
+    # The layout before releases.parquet: release_ts in the edges
+    duckdb.sql(f"""
+        COPY (SELECT e.*, r.release_ts FROM '{out}/edges.parquet' e
+              JOIN '{out}/releases.parquet' r USING (dependent_ga, dependent_version))
+        TO '{out}/old.parquet' (FORMAT parquet)""")
+    (out / "old.parquet").replace(out / "edges.parquet")
+    (out / "releases.parquet").unlink()
+    old_counts, old_deps = select_dependents.load_dependents(str(out), LIB, "1.0")
+
+    assert build_index.split_releases(out) == [out / "edges.parquet"]
+    assert build_index.split_releases(out) == []
+    assert (out / "releases.parquet").exists()
+    assert select_dependents.load_dependents(str(out), LIB, "1.0") == (old_counts, old_deps)
+
+
+def test_summaries_count_projects_outside_test_scope(index):
+    out, _ = index
+    import duckdb
+    versions = duckdb.sql(f"SELECT * FROM '{out}/versions.parquet'").fetchall()
+    assert versions == [("com.acme:core", "1.1", 2), ("com.acme:core", "1.2", 1),
+                        (LIB, "1.0", 4), (LIB, "2.0", 1)]
+    libraries = duckdb.sql(f"SELECT * FROM '{out}/libraries.parquet'").fetchall()
+    # reach counts every dependent, test scope and version ranges included
+    assert libraries == [("com.acme:core", 2, 2, 2), (LIB, 2, 4, 6)]
 
 
 def test_load_dependents_filters_test_scope_and_collapses(index):

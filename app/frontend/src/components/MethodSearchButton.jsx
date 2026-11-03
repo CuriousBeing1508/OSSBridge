@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Search, X, TrendingUp, Users, Target, CheckCircle, AlertCircle, XCircle, BarChart3, Percent, ChevronLeft } from 'lucide-react';
 import API_BASE_URL from '../services/api';
 
 
@@ -72,18 +71,15 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
         <div className="h-full flex flex-col">
           {/* Header */}
           <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 flex justify-between items-center shadow-lg">
-            <div className="flex items-center gap-3">
-              <Search className="w-5 h-5" />
-              <div>
-                <h2 className="text-lg font-bold">API Method Search</h2>
-                <p className="text-blue-100 text-xs">{library} v{version}</p>
-              </div>
+            <div>
+              <h2 className="text-lg font-bold">API Method Search</h2>
+              <p className="text-blue-100 text-xs">{library} v{version}</p>
             </div>
             <button
               onClick={onClose}
-              className="text-white hover:bg-blue-800 p-2 rounded-full transition"
+              className="text-white text-sm hover:bg-blue-800 px-3 py-1 rounded transition"
             >
-              <X className="w-5 h-5" />
+              Close
             </button>
           </div>
 
@@ -101,9 +97,8 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
               <button
                 onClick={handleSearch}
                 disabled={loading || !searchQuery.trim()}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition text-sm flex items-center gap-2"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition text-sm"
               >
-                <Search className="w-4 h-4" />
                 Search
               </button>
             </div>
@@ -111,9 +106,8 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
             {activeTab === 'analytics' && (
               <button
                 onClick={handleBackToSearch}
-                className="mt-2 text-blue-600 hover:text-blue-800 flex items-center gap-1 text-sm"
+                className="mt-2 text-blue-600 hover:text-blue-800 text-sm"
               >
-                <ChevronLeft className="w-4 h-4" />
                 Back to results
               </button>
             )}
@@ -179,26 +173,22 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
                 {/* Key Metrics Grid */}
                 <div className="grid grid-cols-2 gap-3">
                   <MetricCard
-                    icon={<Users className="w-4 h-4" />}
                     label="Dependents"
                     value={analytics.usageStatistics.dependentsUsingMethod}
                     total={analytics.usageStatistics.totalDependents}
                     color="blue"
                   />
                   <MetricCard
-                    icon={<TrendingUp className="w-4 h-4" />}
                     label="Total Usage"
                     value={analytics.usageStatistics.totalUsageCount}
                     color="green"
                   />
                   <MetricCard
-                    icon={<Percent className="w-4 h-4" />}
                     label="Adoption"
                     value={`${analytics.usageStatistics.adoptionRate}%`}
                     color="purple"
                   />
                   <MetricCard
-                    icon={<Target className="w-4 h-4" />}
                     label="Coverage"
                     value={`${analytics.testCoverage.coveragePercentage}%`}
                     status={analytics.testCoverage.status}
@@ -210,17 +200,13 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                   <h4 className="font-semibold text-sm text-gray-800 mb-2">Summary</h4>
                   <p className="text-xs text-gray-700 mb-1">{analytics.summary.mainMessage}</p>
-                  <div className="mt-2 flex items-start gap-2">
-                    {getRecommendationIcon(analytics.summary.recommendation)}
-                    <p className="text-xs font-medium">{analytics.summary.recommendation}</p>
-                  </div>
+                  <p className="mt-2 text-xs font-medium">{analytics.summary.recommendation}</p>
                 </div>
 
                 {/* Insights */}
                 {analytics.insights && analytics.insights.length > 0 && (
                   <div>
-                    <h4 className="font-semibold text-sm text-gray-800 mb-2 flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" />
+                    <h4 className="font-semibold text-sm text-gray-800 mb-2">
                       Insights
                     </h4>
                     <div className="space-y-2">
@@ -244,10 +230,8 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
                             <code className="text-xs text-gray-800 truncate">{pattern.pattern}</code>
                             <span className="text-xs text-gray-500 ml-2 flex-shrink-0">{pattern.percentage}%</span>
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-gray-600">
-                            <span>{pattern.usageCount} uses</span>
-                            <span>•</span>
-                            <span>{pattern.dependentCount} deps</span>
+                          <div className="text-xs text-gray-600">
+                            {pattern.usageCount} uses, {pattern.dependentCount} deps
                           </div>
                         </div>
                       ))}
@@ -287,7 +271,6 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
             {/* Empty State */}
             {!loading && !searchResults && activeTab === 'search' && (
               <div className="text-center py-16 text-gray-400">
-                <Search className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                 <p className="text-sm">Search for any API method</p>
                 <p className="text-xs mt-1">Try: readValue, writeValue</p>
               </div>
@@ -300,7 +283,7 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
 };
 
 // Helper Components
-const MetricCard = ({ icon, label, value, total, color, status }) => {
+const MetricCard = ({ label, value, total, color, status }) => {
   const colors = {
     blue: 'bg-blue-50 text-blue-600 border-blue-200',
     green: 'bg-green-50 text-green-600 border-green-200',
@@ -311,10 +294,7 @@ const MetricCard = ({ icon, label, value, total, color, status }) => {
 
   return (
     <div className={`border rounded-lg p-3 ${colors[color]}`}>
-      <div className="flex items-center gap-1 mb-1">
-        {icon}
-        <span className="text-xs font-medium">{label}</span>
-      </div>
+      <div className="text-xs font-medium mb-1">{label}</div>
       <div className="text-xl font-bold">
         {value}
         {total && <span className="text-sm font-normal">/{total}</span>}
@@ -332,17 +312,9 @@ const InsightCard = ({ insight }) => {
     info: 'bg-blue-50 border-blue-200 text-blue-800',
   };
 
-  const icons = {
-    positive: <CheckCircle className="w-3 h-3" />,
-    warning: <AlertCircle className="w-3 h-3" />,
-    critical: <XCircle className="w-3 h-3" />,
-    info: <BarChart3 className="w-3 h-3" />,
-  };
-
   return (
-    <div className={`border rounded p-2 flex items-start gap-2 ${styles[insight.type]}`}>
-      {icons[insight.type]}
-      <p className="text-xs flex-1">{insight.message}</p>
+    <div className={`border rounded p-2 ${styles[insight.type]}`}>
+      <p className="text-xs">{insight.message}</p>
     </div>
   );
 };
@@ -354,15 +326,6 @@ const getCoverageColor = (status) => {
   return 'red';
 };
 
-const getRecommendationIcon = (recommendation) => {
-  if (recommendation.includes('✓')) {
-    return <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />;
-  } else if (recommendation.includes('⚠️')) {
-    return <AlertCircle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />;
-  }
-  return <BarChart3 className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />;
-};
-
 // Main component with trigger button
 const MethodSearchButton = ({ library, version }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -371,10 +334,9 @@ const MethodSearchButton = ({ library, version }) => {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 shadow-sm text-sm"
+        className="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition shadow-sm text-sm"
       >
-        <Search className="w-4 h-4" />
-        <span className="hidden sm:inline">Search Methods</span>
+        Search Methods
       </button>
       
       <MethodSearchModal

@@ -48,6 +48,24 @@ export const searchLibraries = async (query) =>
 export const getVersions = async (library) =>
   DEP_API.get(`/versions`, { params: { library } });
 
+// Every version of a library (dependents index and analyzed), each marked analyzed or not
+export const getLibraryVersions = async (library) =>
+  DEP_API.get(`/library`, { params: { library } });
+
+// ====================================================================
+// ANALYZE FUNCTIONS (start an analysis on GitHub Actions, follow it)
+// ====================================================================
+
+export const getAnalyzeConfig = async () =>
+  axios.get(`${API_BASE_URL}/api/analyze/config`);
+
+// Latest analysis run of each version of a library
+export const getAnalyzeStatus = async (library) =>
+  axios.get(`${API_BASE_URL}/api/analyze/status`, { params: { library } });
+
+export const startAnalysis = async (library, version) =>
+  axios.post(`${API_BASE_URL}/api/analyze`, { library, version });
+
 export const getDependents = async (library, version) =>
   DEP_API.get(`/details`, { params: { library, version } });
 

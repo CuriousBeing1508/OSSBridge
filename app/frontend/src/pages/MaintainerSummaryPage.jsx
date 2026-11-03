@@ -25,6 +25,9 @@ const COLORS = [
   "#EC4899", "#14B8A6", "#F97316", "#22C55E", "#6366F1"
 ];
 
+// Pie chart slices with a value: a zero slice has no area but would still get a label
+const pieSlices = (slices) => slices.filter((slice) => slice.value > 0);
+
 const MaintainerSummaryPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -138,7 +141,9 @@ const MaintainerSummaryPage = () => {
 
       } catch (err) {
         console.error("Error fetching data:", err);
-        setError("Failed to fetch summary data.");
+        setError(err.response?.status === 404
+          ? `${library} ${version} has not been analyzed yet. Go back to the version list to see the analyzed versions.`
+          : "Failed to fetch summary data.");
       } finally {
         setLoading(false);
       }
@@ -175,7 +180,7 @@ const MaintainerSummaryPage = () => {
             onClick={() => navigate(pageUrl("/analysisV2", { library, version }), { state: { library, version } })}
             className="mb-4 text-gray-600 hover:text-gray-800 flex items-center"
           >
-            ← Back to Analysis
+            Back to Analysis
           </button>
 
           <h1 className="text-xl font-bold text-gray-800">
@@ -288,14 +293,16 @@ const MaintainerSummaryPage = () => {
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
-                      data={Object.entries(data.categoryDistribution).map(([name, value]) => ({ name, value }))}
+                      data={pieSlices(Object.entries(data.categoryDistribution).map(([name, value], i) => (
+                        { name, value, color: COLORS[i % COLORS.length] })))}
                       dataKey="value"
                       nameKey="name"
                       outerRadius={100}
                       label
                     >
-                      {Object.keys(data.categoryDistribution).map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      {pieSlices(Object.entries(data.categoryDistribution).map(([name, value], i) => (
+                        { name, value, color: COLORS[i % COLORS.length] }))).map((slice) => (
+                        <Cell key={slice.name} fill={slice.color} />
                       ))}
                     </Pie>
                     <Tooltip />
@@ -418,10 +425,10 @@ const MaintainerSummaryPage = () => {
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie
-                          data={[
-                            { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis },
-                            { name: "Never Used", value: apiSurfaceData.totalUnusedApis }
-                          ]}
+                          data={pieSlices([
+                            { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
+                            { name: "Never Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" }
+                          ])}
                           dataKey="value"
                           nameKey="name"
                           cx="50%"
@@ -429,8 +436,10 @@ const MaintainerSummaryPage = () => {
                           outerRadius={100}
                           label={({ percent }) => `${(percent * 100).toFixed(1)}%`}
                         >
-                          <Cell fill="#10B981" />
-                          <Cell fill="#EF4444" />
+                          {pieSlices([
+                            { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
+                            { name: "Never Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" }
+                          ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
                         </Pie>
                         <Tooltip />
                         <Legend />
@@ -596,19 +605,8 @@ const MaintainerSummaryPage = () => {
                     ? 'bg-yellow-50 border-yellow-400'
                     : 'bg-green-50 border-green-400'
                     }`}>
-                    <div className="flex items-start">
-                      <div className="flex-shrink-0">
-                        {testCoverageData.usageBasedCoverage < testCoverageData.overallProjectCoverage ? (
-                          <svg className="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="ml-3">
+                    <div>
+                      <div>
                         <h3 className={`text-sm font-medium ${testCoverageData.usageBasedCoverage < testCoverageData.overallProjectCoverage
                           ? 'text-yellow-800'
                           : 'text-green-800'
@@ -633,12 +631,7 @@ const MaintainerSummaryPage = () => {
                 {/* Quick Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                   <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-green-600 font-semibold"> Have Tests</div>
-                      <svg className="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                    </div>
+                    <div className="text-sm text-green-600 font-semibold mb-2">Have Tests</div>
                     <div className="text-3xl font-bold text-green-600">
                       {testCoverageData.coveredByTests.toLocaleString()}
                     </div>
@@ -648,12 +641,7 @@ const MaintainerSummaryPage = () => {
                   </div>
 
                   <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-red-600 font-semibold"> Need Tests</div>
-                      <svg className="h-5 w-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                      </svg>
-                    </div>
+                    <div className="text-sm text-red-600 font-semibold mb-2">Need Tests</div>
                     <div className="text-3xl font-bold text-red-600">
                       {testCoverageData.notCoveredByTests.toLocaleString()}
                     </div>
@@ -663,12 +651,7 @@ const MaintainerSummaryPage = () => {
                   </div>
 
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm text-blue-600 font-semibold"> Total Used</div>
-                      <svg className="h-5 w-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                      </svg>
-                    </div>
+                    <div className="text-sm text-blue-600 font-semibold mb-2">Total Used</div>
                     <div className="text-3xl font-bold text-blue-600">
                       {testCoverageData.totalUsedApis.toLocaleString()}
                     </div>
@@ -683,10 +666,7 @@ const MaintainerSummaryPage = () => {
                   <div className="bg-white rounded-lg border-2 border-red-300">
                     <div className="bg-red-50 px-6 py-4 border-b border-red-200">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-red-800 flex items-center">
-                          <svg className="w-6 h-6 mr-2 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                          </svg>
+                        <h3 className="text-lg font-semibold text-red-800">
                           Priority: Consider adding tests for these {testCoverageData.notCoveredByTests.toLocaleString()} API methods
                         </h3>
                         <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-200 text-red-800">
@@ -809,19 +789,8 @@ const MaintainerSummaryPage = () => {
                   ? 'bg-yellow-50 border-yellow-400'
                   : 'bg-red-50 border-red-400'
                 }`}>
-                <div className="flex items-start">
-                  <div className="flex-shrink-0">
-                    {communityTestCoverageData.communityTestCoverage >= 60 ? (
-                      <svg className="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                    ) : (
-                      <svg className="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="ml-3">
+                <div>
+                  <div>
                     <h3 className={`text-sm font-medium ${communityTestCoverageData.communityTestCoverage >= 60
                       ? 'text-green-800'
                       : communityTestCoverageData.communityTestCoverage >= 40
@@ -891,7 +860,7 @@ const MaintainerSummaryPage = () => {
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
-                      data={[
+                      data={pieSlices([
                         {
                           name: "Fully Covered",
                           value: communityTestCoverageData.summary.fullyCoveredCount,
@@ -907,7 +876,7 @@ const MaintainerSummaryPage = () => {
                           value: communityTestCoverageData.summary.notCoveredCount,
                           color: "#EF4444"
                         }
-                      ]}
+                      ])}
                       dataKey="value"
                       nameKey="name"
                       cx="50%"
@@ -915,9 +884,11 @@ const MaintainerSummaryPage = () => {
                       outerRadius={100}
                       label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
                     >
-                      <Cell fill="#10B981" />
-                      <Cell fill="#F59E0B" />
-                      <Cell fill="#EF4444" />
+                      {pieSlices([
+                        { name: "Fully Covered", value: communityTestCoverageData.summary.fullyCoveredCount, color: "#10B981" },
+                        { name: "Partially Covered", value: communityTestCoverageData.summary.partiallyCoveredCount, color: "#F59E0B" },
+                        { name: "Not Covered", value: communityTestCoverageData.summary.notCoveredCount, color: "#EF4444" },
+                      ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
                     </Pie>
                     <Tooltip />
                     <Legend />

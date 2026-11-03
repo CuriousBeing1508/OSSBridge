@@ -25,11 +25,8 @@ This tool extracts all Maven projects (dependents) that use a specific library v
 ### The Technology Stack
 ```
 Your Python Script
-       ↓
    Neo4j Database (graph database)
-       ↓
    Goblin Weaver Dataset (Maven Central snapshot)
-       ↓
    Neo4jWeaverDocker (containerization)
 ```
 
@@ -98,7 +95,7 @@ Docker version 24.0.7, build afdd53b
 Docker Compose version v2.23.0
 ```
 
-**✓ Success indicator:** Docker Desktop shows "running" status
+**Success indicator:** Docker Desktop shows "running" status
 
 ---
 
@@ -114,7 +111,7 @@ cd Neo4jWeaverDocker
 
 **Method B - Manual Download:**
 1. Visit: https://github.com/Goblin-Ecosystem/Neo4jWeaverDocker
-2. Click "Code" → "Download ZIP"
+2. Click "Code", then "Download ZIP"
 3. Extract the ZIP file
 4. Open terminal in extracted folder
 
@@ -157,7 +154,7 @@ docker-compose logs -f neo4j
 # Look for these messages:
 # "Downloading dataset from Zenodo..."
 # "Importing data..."
-# "Started."  ← Neo4j is ready!
+# "Started."  (Neo4j is ready)
 ```
 
 **Ports opened:**
@@ -199,11 +196,11 @@ python -c "from neo4j import GraphDatabase; \
 driver = GraphDatabase.driver('bolt://localhost:7687', \
 auth=('neo4j', 'Password1')); \
 driver.verify_connectivity(); \
-print('✓ Connected successfully'); \
+print('Connected successfully'); \
 driver.close()"
 ```
 
-**✓ Success indicator:** No errors, connection confirmed
+**Success indicator:** No errors, connection confirmed
 
 ---
 
@@ -222,12 +219,12 @@ pip3 install neo4j
 
 **Verify installation:**
 ```bash
-python -c "import neo4j; print('✓ neo4j driver version:', neo4j.__version__)"
+python -c "import neo4j; print('neo4j driver version:', neo4j.__version__)"
 ```
 
 **Expected output:**
 ```
-✓ neo4j driver version: 5.x.x
+neo4j driver version: 5.x.x
 ```
 
 ---
@@ -343,17 +340,11 @@ python extractDependentsForALib.py "com.google.guava:guava" "31.1-jre"
 ### What Happens During Extraction
 ```
 1. Script connects to Neo4j (bolt://localhost:7687)
-   ↓
 2. Verifies connection is working
-   ↓
 3. Checks database contains data
-   ↓
 4. Executes Cypher query for your library+version
-   ↓
 5. Fetches all matching dependents (shows progress every 1,000)
-   ↓
 6. Saves results to CSV file
-   ↓
 7. Logs extraction details
 ```
 
@@ -442,12 +433,12 @@ pwd  # Should show path ending in Neo4jWeaverDocker
 
 **1. Library name format incorrect**
 
-❌ Wrong formats:
+Wrong formats:
 - `kotlin-stdlib` (missing groupId)
 - `org.jetbrains.kotlin.kotlin-stdlib` (dot instead of colon)
 - `org.jetbrains.kotlin/kotlin-stdlib` (slash instead of colon)
 
-✅ Correct format:
+Correct format:
 - `org.jetbrains.kotlin:kotlin-stdlib`
 
 **2. Version doesn't exist in dataset**
@@ -532,7 +523,7 @@ And access browser at: `http://localhost:17474`
 
 **Solution:**
 
-**Increase Docker memory** (Docker Desktop → Settings → Resources):
+**Increase Docker memory** (Docker Desktop, Settings, Resources):
 - Set memory to 8GB or more
 
 **Increase Neo4j heap size** in `docker-compose.yml`:
@@ -653,7 +644,7 @@ docker run --rm -v neo4jweaverdocker_neo4j_data:/data \
 
 **Complete cleanup (removes all data):**
 ```bash
-docker-compose down -v  # ⚠️ This deletes the database!
+docker-compose down -v  # This deletes the database!
 ```
 
 ---
@@ -671,7 +662,7 @@ CREATE INDEX release_id IF NOT EXISTS FOR (r:Release) ON (r.id);
 
 ### Optimize Docker
 
-**Allocate more resources** (Docker Desktop → Settings → Resources):
+**Allocate more resources** (Docker Desktop, Settings, Resources):
 - **CPUs:** 4+ cores
 - **Memory:** 8GB+
 - **Disk:** SSD preferred

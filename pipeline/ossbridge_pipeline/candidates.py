@@ -57,18 +57,39 @@ def parquet_source(files, columns):
 
 def load_dependents(index, library, version, include_test_scope=False):
     """Return (counts, dependents) where dependents has one row per project, highest reach first."""
-    edges = parquet_source(index_files(index, "edges.parquet"), [
+    edge_files = index_files(index, "edges.parquet")
+    edges = parquet_source(edge_files, [
         ("library_ga", "VARCHAR"), ("library_version", "VARCHAR"), ("scope", "VARCHAR"),
+        ("dependent_ga", "VARCHAR"), ("dependent_version", "VARCHAR")])
+    releases = parquet_source(index_files(index, "releases.parquet"), [
         ("dependent_ga", "VARCHAR"), ("dependent_version", "VARCHAR"), ("release_ts", "BIGINT")])
     reach = parquet_source(index_files(index, "reach.parquet"),
                            [("ga", "VARCHAR"), ("reach", "BIGINT")])
     con = duckdb.connect()
+    # Indexes built before releases.parquet existed have release_ts in the edges
+    columns = [c for (c, *_) in con.execute(f"DESCRIBE SELECT * FROM {edges}").fetchall()]
+    ts_in_edges = "release_ts" in columns
     # DISTINCT: a library added with add-library may also be in the base index
     con.execute(f"""
         CREATE TEMP TABLE matched AS
-        SELECT DISTINCT * FROM {edges}
+        SELECT DISTINCT library_ga, library_version, scope, dependent_ga, dependent_version
+               {", release_ts" if ts_in_edges else ""}
+        FROM {edges}
         WHERE library_ga = ? AND library_version = ?
     """, [library, version])
+    if not ts_in_edges:
+        con.execute(f"""
+            CREATE TEMP TABLE with_ts AS
+            SELECT m.*, r.release_ts
+            FROM matched m
+            LEFT JOIN (SELECT dependent_ga, dependent_version, max(release_ts) AS release_ts
+                       FROM {releases}
+                       WHERE dependent_ga IN (SELECT dependent_ga FROM matched)
+                       GROUP BY ALL) r
+              USING (dependent_ga, dependent_version)
+        """)
+        con.execute("DROP TABLE matched")
+        con.execute("ALTER TABLE with_ts RENAME TO matched")
 
     scope_filter = "TRUE" if include_test_scope else "coalesce(scope, '') <> 'test'"
     counts = dict(zip(

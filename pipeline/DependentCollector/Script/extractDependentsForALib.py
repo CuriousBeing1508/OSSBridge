@@ -115,7 +115,7 @@ def fetch_data(library_name, version):
         elapsed_time = time.time() - start_time
         
         if data:
-            print(f"\r  ✓ Fetched {len(data)} dependents from Neo4j in {elapsed_time:.2f} seconds")
+            print(f"\r  Fetched {len(data)} dependents from Neo4j in {elapsed_time:.2f} seconds")
         else:
             print(f"\r  No dependents found in database (took {elapsed_time:.2f} seconds)")
     
@@ -150,8 +150,8 @@ def save_to_csv(library_name, version, data):
                 except (KeyError, IndexError, TypeError) as e:
                     print(f"Skipping record due to missing data: {record} - Error: {e}")
         
-        print(f"✓ Data for {library_name} version {version} saved to {file_name}")
-        print(f"✓ Total dependents found: {len(data)}")
+        print(f"Data for {library_name} version {version} saved to {file_name}")
+        print(f"Total dependents found: {len(data)}")
         return file_name
     else:
         return None
@@ -183,9 +183,9 @@ def log_extraction(library_name, version, num_dependents, elapsed_time, status):
         log_file.write(log_entry)
     
     if status == "SUCCESS":
-        print(f"✓ Extraction logged to {log_file_path}")
+        print(f"Extraction logged to {log_file_path}")
     else:
-        print(f"✗ No dependents found for {library_name} version {version}")
+        print(f"No dependents found for {library_name} version {version}")
         print(f"  Failure logged to {log_file_path}")
 
 def main():
@@ -195,7 +195,7 @@ def main():
     
     args = parser.parse_args()
     
-    print(f"\n🔍 Searching for dependents of {args.library} version {args.version}...")
+    print(f"\nSearching for dependents of {args.library} version {args.version}...")
     print("-" * 70)
     
     # Fetch data and record time

@@ -145,7 +145,7 @@ every project has the same chance).
 
 `--fetch-missing` adds the library from Neo4j if it is not in the index yet (start Neo4j
 first with `docker compose up -d goblin-neo4j`). The Goblin graph is a snapshot of
-30 Aug 2024; later releases have no dependents in it.
+20 Apr 2025; later releases have no dependents in it.
 
 *Replaces `DependentCollector/Script/extractDependentsForALib.py` + `getMavenMetadata.py`.*
 

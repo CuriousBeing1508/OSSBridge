@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Dataset → Result Tables Converter
+Dataset to Result Tables Converter
 ================================================================================
 
 Converts the file-based OSSBridge dataset into result tables

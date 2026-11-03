@@ -106,7 +106,7 @@ const DependentDetailPage = () => {
             onClick={() => navigate(-1)}
             className="mb-4 text-gray-600 hover:text-gray-800 flex items-center"
           >
-            ← Back
+            Back
           </button>
           
           <div className="text-center mb-8">
@@ -160,6 +160,13 @@ const DependentDetailPage = () => {
     );
   }
 
+  // Pie chart slices with a value: a zero slice has no area but would still get a label
+  const categorySlices = data?.categoryDistribution
+    ? Object.entries(data.categoryDistribution)
+        .map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length] }))
+        .filter((slice) => slice.value > 0)
+    : [];
+
   // Show details after version is selected
   return (
     <div className="min-h-screen bg-gray-50">
@@ -171,7 +178,7 @@ const DependentDetailPage = () => {
               onClick={() => navigate(pageUrl("/analysisV2", { library, version: selectedVersion }), { state: { library, version: selectedVersion } })}
               className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition"
             >
-              ← Back to Analysis
+              Back to Analysis
             </button>
             
             <h1 className="text-xl font-bold text-blue-700">
@@ -228,17 +235,14 @@ const DependentDetailPage = () => {
               <ResponsiveContainer width="100%" height={350}>
                 <PieChart>
                   <Pie
-                    data={Object.entries(data.categoryDistribution).map(([name, value]) => ({
-                      name,
-                      value,
-                    }))}
+                    data={categorySlices}
                     dataKey="value"
                     nameKey="name"
                     outerRadius={120}
                     label
                   >
-                    {Object.keys(data.categoryDistribution).map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    {categorySlices.map((slice) => (
+                      <Cell key={slice.name} fill={slice.color} />
                     ))}
                   </Pie>
                   <Tooltip />

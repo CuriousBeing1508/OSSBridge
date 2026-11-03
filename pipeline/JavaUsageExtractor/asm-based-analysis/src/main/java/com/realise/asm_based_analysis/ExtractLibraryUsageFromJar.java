@@ -32,7 +32,7 @@ public class ExtractLibraryUsageFromJar {
         String targetDependency = args[2];
 
         Files.createDirectories(BASE_OUTPUT_DIR);
-        // ✅ Create Dependents subdirectory
+        // Create Dependents subdirectory
         Files.createDirectories(BASE_OUTPUT_DIR.resolve("Dependents"));
 
         logWriter = new PrintWriter(Files.newBufferedWriter(BASE_OUTPUT_DIR.resolve("analysis_log.txt")));
@@ -56,7 +56,7 @@ public class ExtractLibraryUsageFromJar {
 
     private static void analyzeJar(Path jarPath) {
         try (JarFile jarFile = new JarFile(jarPath.toFile())) {
-            // ✅ Output CSV goes to Dependents/ subdirectory
+            // Output CSV goes to Dependents/ subdirectory
             String outputCsv = BASE_OUTPUT_DIR
                     .resolve("Dependents")
                     .resolve(jarPath.getFileName().toString().replace(".jar", "_third_party_calls.csv"))
@@ -89,7 +89,7 @@ public class ExtractLibraryUsageFromJar {
             // Only write CSV and add to summary if there are actual usages
             if (seenCalls.size() > 0) {
                 writeCsv(outputCsv, csvRows);
-                log("✓ Exported to: " + outputCsv);
+                log("Exported to: " + outputCsv);
 
                 analysisSummary.add(new String[]{
                         jarFileName, "-", String.valueOf(totalInstructions[0]), String.valueOf(seenCalls.size())
@@ -99,7 +99,7 @@ public class ExtractLibraryUsageFromJar {
             }
 
         } catch (IOException e) {
-            log("✗ Failed to process JAR: " + jarPath.getFileName() + " -> " + e.getMessage());
+            log("Failed to process JAR: " + jarPath.getFileName() + " -> " + e.getMessage());
         }
     }
 

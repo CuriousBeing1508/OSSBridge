@@ -1,5 +1,6 @@
 # Hugging Face Space: the frontend and backend in one container on port 7860,
-# reading the published result tables from the Hugging Face dataset.
+# reading the published result tables and dependents index summaries from the
+# Hugging Face dataset.
 # Local use with separate containers is docker-compose.yml.
 
 FROM node:22-bookworm-slim AS frontend
@@ -29,6 +30,7 @@ ENV HOME=/home/node \
     NODE_ENV=production \
     PORT=7860 \
     FRONTEND_DIR=/app/frontend \
-    RESULTS_PATH=hf://datasets/rachna1508/ossbridge-results/results
+    RESULTS_PATH=hf://datasets/rachna1508/ossbridge-results/results \
+    INDEX_PATH=hf://datasets/rachna1508/ossbridge-results/dependents-index
 EXPOSE 7860
 CMD ["node", "server.js"]

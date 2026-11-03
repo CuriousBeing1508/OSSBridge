@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 def parse_jacoco_xml(xml_path):
-    print(f"📖 Parsing: {xml_path}")
+    print(f"Parsing: {xml_path}")
     
     with open(xml_path, 'r') as f:
         data = xmltodict.parse(f.read())

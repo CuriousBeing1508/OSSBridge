@@ -25,7 +25,7 @@ ZIP_FILE="$WORK_DIR/source.zip"
 
 # Check if already downloaded and extracted
 if [ -d "$WORK_DIR/$EXTRACTED_DIR_NAME" ] || [ -d "$WORK_DIR/${TAG}" ]; then
-    echo "✓ Source code already downloaded and extracted"
+    echo "Source code already downloaded and extracted"
     echo "  Skipping download and extraction..."
     
     cd "$WORK_DIR"
@@ -39,7 +39,7 @@ if [ -d "$WORK_DIR/$EXTRACTED_DIR_NAME" ] || [ -d "$WORK_DIR/${TAG}" ]; then
     
 # Check if zip exists but not extracted yet
 elif [ -f "$ZIP_FILE" ]; then
-    echo "✓ Source zip already downloaded"
+    echo "Source zip already downloaded"
     echo "  Extracting..."
     
     cd "$WORK_DIR"
@@ -57,7 +57,7 @@ elif [ -f "$ZIP_FILE" ]; then
     fi
     
     rm source.zip
-    echo "✓ Extraction complete"
+    echo "Extraction complete"
     
 else
     # Download and extract (nothing exists yet)
@@ -92,7 +92,7 @@ else
     fi
     
     rm source.zip
-    echo "✓ Download and extraction complete"
+    echo "Download and extraction complete"
 fi
 
 cd "$EXTRACTED_DIR"
@@ -105,11 +105,11 @@ if [ -f "pom.xml" ]; then
     if [ -f "pom.xml.original" ]; then
         echo "Restoring pom.xml from backup for clean start..."
         cp pom.xml.original pom.xml
-        echo "✓ Restored from backup"
+        echo "Restored from backup"
     else
         # First time - create backup
         cp pom.xml pom.xml.original
-        echo "✓ Created backup: pom.xml.original"
+        echo "Created backup: pom.xml.original"
     fi
     
     # Fix Java version compatibility FIRST (before adding plugins)
@@ -125,11 +125,11 @@ if [ -f "pom.xml" ]; then
             sed -i 's|<javac\.target\.version>1\.7</javac\.target\.version>|<javac.target.version>1.8</javac.target.version>|g' pom.xml
         fi
         
-        echo "✓ Updated Java version settings"
+        echo "Updated Java version settings"
         echo "Verifying changes:"
         grep "javac.src.version\|javac.target.version" pom.xml
     else
-        echo "✓ Java version is compatible"
+        echo "Java version is compatible"
     fi
     
     # Add JaCoCo plugin if not present
@@ -167,9 +167,9 @@ JACOCO_EOF
         fi
         
         rm jacoco-config.xml
-        echo "✓ JaCoCo plugin added"
+        echo "JaCoCo plugin added"
     else
-        echo "✓ JaCoCo already configured"
+        echo "JaCoCo already configured"
     fi
     
     # Check for hardcoded <argLine> in surefire plugin and fix it
@@ -187,10 +187,10 @@ JACOCO_EOF
                 sed -i 's|<argLine>|<argLine>@{argLine} |g' pom.xml
             fi
             
-            echo "✓ Fixed argLine configurations:"
+            echo "Fixed argLine configurations:"
             grep "<argLine>" pom.xml | head -5
         else
-            echo "✓ argLine already has @{argLine}"
+            echo "argLine already has @{argLine}"
         fi
     fi
     
@@ -217,7 +217,7 @@ SUREFIRE_EOF
         fi
         
         rm surefire-config.xml
-        echo "✓ Surefire plugin added"
+        echo "Surefire plugin added"
     fi
     
     echo ""
@@ -266,9 +266,9 @@ jacocoTestReport {
     }
 }
 GRADLE_EOF
-        echo "✓ JaCoCo added to build.gradle"
+        echo "JaCoCo added to build.gradle"
     else
-        echo "✓ JaCoCo already configured"
+        echo "JaCoCo already configured"
     fi
     
     if [ -f "gradlew" ]; then
@@ -296,7 +296,7 @@ echo "Checking for coverage files..."
 
 if [ ! -f "$COVERAGE_XML" ]; then
     echo ""
-    echo "❌ ERROR: Coverage was not generated"
+    echo "ERROR: Coverage was not generated"
     echo ""
     echo "Debugging information:"
     echo "  Looking for: $COVERAGE_XML"
@@ -304,17 +304,17 @@ if [ ! -f "$COVERAGE_XML" ]; then
     echo ""
     
     if [ -f "target/jacoco.exec" ]; then
-        echo "  ✓ jacoco.exec found: target/jacoco.exec"
+        echo "  jacoco.exec found: target/jacoco.exec"
         ls -lh target/jacoco.exec
     else
-        echo "  ✗ jacoco.exec NOT found - JaCoCo agent didn't attach"
+        echo "  jacoco.exec NOT found - JaCoCo agent didn't attach"
     fi
     
     if [ -d "target/surefire-reports" ]; then
         TEST_COUNT=$(find target/surefire-reports -name "*.xml" | wc -l)
-        echo "  ✓ Test results found: $TEST_COUNT test files"
+        echo "  Test results found: $TEST_COUNT test files"
     else
-        echo "  ✗ No test results found"
+        echo "  No test results found"
     fi
     
     echo ""
@@ -330,9 +330,9 @@ fi
 OUTPUT_DIR="../../data/dataset/TestCoverage"
 mkdir -p "$OUTPUT_DIR"
 
-echo "✓ Coverage XML found: $COVERAGE_XML"
+echo "Coverage XML found: $COVERAGE_XML"
 if [ -f "$COVERAGE_HTML" ]; then
-    echo "✓ Coverage HTML found: $COVERAGE_HTML"
+    echo "Coverage HTML found: $COVERAGE_HTML"
 fi
 
 echo ""
@@ -345,7 +345,7 @@ if [ -f "$COVERAGE_HTML" ]; then
 fi
 
 echo ""
-echo "✅ SUCCESS! Coverage extracted!"
+echo "SUCCESS: Coverage extracted"
 echo ""
 echo "Files saved to:"
 echo "  XML: $OUTPUT_DIR/${LIBRARY}-${VERSION}_coverage.xml"
@@ -381,11 +381,11 @@ echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     cd ../../../
     rm -rf "$WORK_DIR"
-    echo "✓ Cleaned up temporary files"
+    echo "Cleaned up temporary files"
 else
     cd ../../../
-    echo "✓ Source directory preserved at: $WORK_DIR"
+    echo "Source directory preserved at: $WORK_DIR"
 fi
 
 echo ""
-echo "🎉 Done!"
+echo "Done."

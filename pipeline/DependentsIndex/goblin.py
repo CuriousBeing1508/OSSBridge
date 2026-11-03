@@ -15,7 +15,7 @@ import os
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-SNAPSHOT_DATE = "2024-08-30"
+SNAPSHOT_DATE = "2025-04-20"
 
 EDGE_RETURN = """
 RETURN a.id AS library_ga, d.targetVersion AS library_version, d.scope AS scope,

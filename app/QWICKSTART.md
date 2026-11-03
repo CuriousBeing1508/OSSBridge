@@ -50,7 +50,16 @@ Clone the repository; the app is in its `app/` folder.
    RESULTS_PATH=hf://datasets/rachna1508/ossbridge-results/results
 ```
 
-3. Save the file and close the editor
+3. Optionally, the same for the dependents index, so the app lists every library and
+   version on Maven Central and marks which ones are analyzed (without it, only the
+   analyzed versions are listed):
+```bash
+   INDEX_DIR=../data/dependents-index
+   # or
+   INDEX_PATH=hf://datasets/rachna1508/ossbridge-results/dependents-index
+```
+
+4. Save the file and close the editor
 
 The backend loads the tables when it starts; restart it to see new results.
 

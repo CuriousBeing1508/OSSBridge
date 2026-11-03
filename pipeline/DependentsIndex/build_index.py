@@ -10,13 +10,26 @@ version" so the pipeline no longer needs a running Neo4j instance.
 OUTPUT (in the index directory):
     edges.parquet   one row per (library version, dependent release)
                     columns: library_ga, library_version, scope,
-                             dependent_ga, dependent_version, release_ts
+                             dependent_ga, dependent_version
                     sorted by library_ga, library_version so readers (DuckDB,
                     also over HTTPS) only fetch the row groups they need
+    releases.parquet  dependent_ga, dependent_version, release_ts -- one row
+                    per dependent release. Kept out of edges.parquet, where the
+                    timestamp would repeat on every dependency of a release and,
+                    being nearly random, take two thirds of the file
     reach.parquet   ga, reach  -- number of distinct artifacts that depend on
                     any version of ga (used to rank dependents by impact)
-    added/<library>/edges.parquet, reach.parquet
+    added/<library>/edges.parquet, releases.parquet, reach.parquet
                     libraries added one at a time with add-library
+    versions.parquet  library_ga, library_version, dependents -- one row per
+                    library version; dependents = distinct dependent projects
+                    outside test scope, as the pipeline's step 1 counts them.
+                    Versions as dependents declared them that are not releases
+                    (ranges such as [1.0,2), RELEASE, ${...}, -SNAPSHOT) are
+                    left out of both summaries
+    libraries.parquet library_ga, versions, dependents, reach -- one row per
+                    library (both summaries include the added libraries; the
+                    app lists libraries and versions from them)
     manifest.json   source, build time, row counts, added libraries
 
 SOURCES:
@@ -24,6 +37,10 @@ SOURCES:
     add-library  Adds all versions of one library from Neo4j to an existing
                  (or new, empty) index. Reach for its dependents is computed
                  in Neo4j, so it is exact even without a full export.
+    summarize    Rewrites versions.parquet and libraries.parquet from the
+                 index's edges (the other commands do this themselves).
+    split-releases  Converts an index built before releases.parquet existed
+                 (release_ts in edges.parquet) to the current layout.
     from-csv     Builds the index from previously exported dependents CSVs
                  (release_id, dependency, artifact_id, ...), one file per
                  library version named <group>:<artifact>-<version>.csv.
@@ -36,6 +53,8 @@ USAGE:
                                       --out ../../data/dependents-index
     python build_index.py from-csv --csv-dir ../../data/dataset/Neo4jDataset \
                                    --out ../../data/dependents-index
+    python build_index.py summarize --out ../../data/dependents-index
+    python build_index.py split-releases --out ../../data/dependents-index
 
     Neo4j connection: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
     (defaults: bolt://localhost:7687, neo4j, Password1).
@@ -65,6 +84,8 @@ RAW_SCHEMA = pa.schema([
 ])
 
 TIMESTAMP_RE = re.compile(r"'timestamp':\s*(\d+)")
+# Declared versions that are not a release: ranges, properties, RELEASE/LATEST, snapshots
+NOT_A_RELEASE = r"[][(),${}\s]|^(RELEASE|LATEST)$|SNAPSHOT"
 ROW_GROUP_SIZE = 100_000
 
 
@@ -148,10 +169,7 @@ def write_edges(raw_dir, out_dir, compute_reach=True):
           AND library_version IS NOT NULL
           AND dependent_release LIKE '%:%:%'
     """)
-    con.execute(f"""
-        COPY (SELECT * FROM edges ORDER BY library_ga, library_version, dependent_ga, dependent_version)
-        TO '{out_dir / "edges.parquet"}' (FORMAT parquet, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
-    """)
+    write_edges_and_releases(con, "edges", out_dir)
     if compute_reach:
         con.execute(f"""
             COPY (
@@ -170,6 +188,82 @@ def write_edges(raw_dir, out_dir, compute_reach=True):
     """).fetchall()]
     con.close()
     return counts, dependent_gas
+
+
+def write_edges_and_releases(con, source, out_dir):
+    """Write edges.parquet and releases.parquet from a relation of edges with release_ts."""
+    out_dir = Path(out_dir)
+    con.execute(f"""
+        COPY (
+            SELECT library_ga, library_version, scope, dependent_ga, dependent_version
+            FROM {source} ORDER BY library_ga, library_version, dependent_ga, dependent_version
+        ) TO '{out_dir / "edges.parquet"}' (FORMAT parquet, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
+    """)
+    con.execute(f"""
+        COPY (
+            SELECT dependent_ga, dependent_version, max(release_ts) AS release_ts
+            FROM {source} GROUP BY ALL ORDER BY dependent_ga, dependent_version
+        ) TO '{out_dir / "releases.parquet"}' (FORMAT parquet, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
+    """)
+
+
+def split_releases(index_dir):
+    """Move release_ts out of edges.parquet into releases.parquet (base and added libraries).
+
+    Returns the edges files that were converted.
+    """
+    index_dir = Path(index_dir)
+    converted = []
+    for edges in [index_dir / "edges.parquet"] + sorted(index_dir.glob("added/*/edges.parquet")):
+        if not edges.exists() or "release_ts" not in pq.read_schema(edges).names:
+            continue
+        old = edges.with_name("edges-with-release-ts.parquet")
+        edges.rename(old)
+        con = duckdb.connect()
+        write_edges_and_releases(con, f"read_parquet('{old}')", edges.parent)
+        con.close()
+        old.unlink()
+        converted.append(edges)
+    return converted
+
+
+def write_summaries(index_dir):
+    """Write versions.parquet and libraries.parquet from the base and added edges."""
+    index_dir = Path(index_dir)
+    edge_files = [index_dir / "edges.parquet"] + sorted(index_dir.glob("added/*/edges.parquet"))
+    reach_files = [index_dir / "reach.parquet"] + sorted(index_dir.glob("added/*/reach.parquet"))
+    edge_files = [f"'{f}'" for f in edge_files if f.exists()]
+    reach_files = [f"'{f}'" for f in reach_files if f.exists()]
+    if not edge_files:
+        return
+    non_test = "coalesce(scope, '') <> 'test'"
+    con = duckdb.connect()
+    # Distinct counts, so a library both in the base index and added is counted once
+    con.execute(f"""
+        CREATE TABLE edges AS
+        SELECT library_ga, library_version, scope, dependent_ga
+        FROM read_parquet([{', '.join(edge_files)}])
+        WHERE NOT regexp_matches(library_version, '{NOT_A_RELEASE}')
+    """)
+    con.execute(f"""
+        COPY (
+            SELECT library_ga, library_version,
+                   count(DISTINCT dependent_ga) FILTER (WHERE {non_test}) AS dependents
+            FROM edges GROUP BY ALL ORDER BY library_ga, library_version
+        ) TO '{index_dir / "versions.parquet"}' (FORMAT parquet, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
+    """)
+    reach = (f"(SELECT ga, max(reach) AS reach FROM read_parquet([{', '.join(reach_files)}]) GROUP BY ga)"
+             if reach_files else "(SELECT NULL::VARCHAR AS ga, NULL::BIGINT AS reach WHERE FALSE)")
+    con.execute(f"""
+        COPY (
+            SELECT e.library_ga, count(DISTINCT e.library_version) AS versions,
+                   count(DISTINCT e.dependent_ga) FILTER (WHERE {non_test}) AS dependents,
+                   coalesce(any_value(r.reach), 0) AS reach
+            FROM edges e LEFT JOIN {reach} r ON r.ga = e.library_ga
+            GROUP BY e.library_ga ORDER BY e.library_ga
+        ) TO '{index_dir / "libraries.parquet"}' (FORMAT parquet)
+    """)
+    con.close()
 
 
 def write_reach(path, reach_rows):
@@ -208,6 +302,7 @@ def finalize(raw_dir, out_dir, source):
         "library_versions": versions,
     })
     write_manifest(out_dir, manifest)
+    write_summaries(out_dir)
     return manifest
 
 
@@ -252,6 +347,7 @@ def add_library(index_dir, library, driver=None, batch_size=500_000):
     manifest = read_manifest(index_dir)
     manifest.setdefault("added", {})[library] = entry
     write_manifest(index_dir, manifest)
+    write_summaries(index_dir)
     print(f"  {library}: {edges:,} edges, {versions} versions, "
           f"{len(dependent_gas):,} non-test dependents in {entry['seconds']}s")
     return entry
@@ -266,6 +362,10 @@ def main():
     add.add_argument("--library", required=True, help="groupId:artifactId")
     from_csv = sub.add_parser("from-csv", help="Build from existing dependents CSV exports")
     from_csv.add_argument("--csv-dir", required=True)
+    summarize = sub.add_parser("summarize", help="Rewrite the version and library summaries")
+    summarize.add_argument("--out", required=True, help="Index directory")
+    split = sub.add_parser("split-releases", help="Move release_ts from edges.parquet to releases.parquet")
+    split.add_argument("--out", required=True, help="Index directory")
 
     for p in (from_neo4j, add, from_csv):
         p.add_argument("--out", required=True, help="Index directory")
@@ -273,6 +373,16 @@ def main():
 
     args = parser.parse_args()
     out_dir = Path(args.out)
+
+    if args.source == "summarize":
+        write_summaries(out_dir)
+        print(f"Wrote {out_dir / 'versions.parquet'} and {out_dir / 'libraries.parquet'}")
+        return
+
+    if args.source == "split-releases":
+        converted = split_releases(out_dir)
+        print(f"Converted {len(converted)} edges file(s)" if converted else "Nothing to convert")
+        return
 
     if args.source == "add-library":
         if add_library(out_dir, args.library, batch_size=args.batch_size) is None:

@@ -30,9 +30,9 @@
   
 //   const library = stateLibrary || contextLibrary;
 
-//   console.log("🎯 AnalysisPage mounted!");
-//   console.log("📦 Received library:", library);
-//   console.log("📦 Received version:", stateVersion);
+//   console.log("AnalysisPage mounted!");
+//   console.log("Received library:", library);
+//   console.log("Received version:", stateVersion);
 
 //   const [versions, setVersions] = useState([]);
 //   const [selectedVersion, setSelectedVersion] = useState(stateVersion || "");
@@ -149,7 +149,7 @@
 //                 onClick={() => navigate("/")}
 //                 className="mb-4 text-gray-600 hover:text-gray-800 flex items-center mx-auto"
 //               >
-//                 ← Back to Home
+//                 Back to Home
 //               </button>
 //               <h1 className="text-4xl font-bold text-blue-800 mb-3">
 //                 Select a Version
@@ -220,7 +220,7 @@
 //               onClick={() => setSelectedVersion("")}
 //               className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition"
 //             >
-//               ← Change Version
+//               Change Version
 //             </button>
 //             <h1 className="text-xl font-bold text-gray-800">
 //               {library} <span className="text-blue-600">v{selectedVersion}</span>
@@ -315,7 +315,7 @@
 //                     <li
 //                       key={i}
 //                       onClick={() => {
-//                         console.log("🚀 Navigating to dependent with:", { library, version: selectedVersion, dependent: d.dependent });
+//                         console.log("Navigating to dependent with:", { library, version: selectedVersion, dependent: d.dependent });
 //                         navigate("/analysisV2/dependent", {
 //                           state: { library, version: selectedVersion, dependent: d.dependent },
 //                         });
@@ -355,9 +355,9 @@
 
 
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getVersions } from "../services/api";
+import { getLibraryVersions, getAnalyzeConfig, getAnalyzeStatus, startAnalysis } from "../services/api";
 import axios from "axios";
 import {
   BarChart,
@@ -375,6 +375,17 @@ import MethodSearchButton from "../components/MethodSearchButton";
 import API_BASE_URL from '../services/api';
 import { pageParam, pageUrl } from "../utils/pageUrl";
 
+// Analysis run states (GitHub Actions run status, or "requested" before GitHub lists it)
+const ACTIVE_STATES = ["requested", "queued", "waiting", "pending", "in_progress"];
+const FAILED_STATES = ["failure", "cancelled", "timed_out", "startup_failure"];
+const POLL_MS = 20000;
+const REQUEST_VISIBLE_MS = 3 * 60 * 1000;
+
+const runLabel = (run) =>
+  run.state === "in_progress" ? "Analysis running"
+    : run.state === "requested" ? "Analysis requested"
+      : "Analysis queued";
+
 const AnalysisPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -385,11 +396,26 @@ const AnalysisPage = () => {
 
   const library = stateLibrary || contextLibrary;
 
-  console.log("🎯 AnalysisPage mounted!");
-  console.log("📦 Received library:", library);
-  console.log("📦 Received version:", stateVersion);
+  console.log("AnalysisPage mounted!");
+  console.log("Received library:", library);
+  console.log("Received version:", stateVersion);
 
+  // [{ version, dependents, analyzed, inIndex, released, afterSnapshot }], newest first
   const [versions, setVersions] = useState([]);
+  const [snapshot, setSnapshot] = useState(null);
+  const [showAll, setShowAll] = useState(true);
+  const [versionFilter, setVersionFilter] = useState("");
+  // Analyses: whether they can be started here, the latest run per version, errors
+  const [analyzeConfig, setAnalyzeConfig] = useState(null);
+  const [runs, setRuns] = useState({});
+  const [analyzeErrors, setAnalyzeErrors] = useState({});
+  const [versionsLoads, setVersionsLoads] = useState(0);
+  const [pollKey, setPollKey] = useState(0);
+  const [resultsReloading, setResultsReloading] = useState(false);
+  const previousRuns = useRef({});
+  const previousReloading = useRef(false);
+  const previousPolled = useRef(false);
+  const localRequests = useRef({});  // version -> when it was started from this page
   const [selectedVersion, setSelectedVersion] = useState(stateVersion || "");
   const [data, setData] = useState(null);
   const [top, setTop] = useState(10);
@@ -408,32 +434,95 @@ const AnalysisPage = () => {
   // Fetch versions when library is available
   useEffect(() => {
     if (!library) {
-      console.log("⚠️ No library, skipping version fetch");
+      console.log("No library, skipping version fetch");
       return;
     }
 
     const fetchVersions = async () => {
-      setLoadingVersions(true);
+      // A reload after an analysis finished updates the list in place
+      const firstLoad = versionsLoads === 0;
+      if (firstLoad) setLoadingVersions(true);
       setError("");
       try {
-        const cleanLibrary = library.includes(":")
-          ? library.split(":").pop()
-          : library;
-
-        console.log("📡 Fetching versions for:", cleanLibrary);
-        const res = await getVersions(cleanLibrary);
-        console.log("✅ Got versions:", res.data);
-        setVersions(res.data);
+        const res = await getLibraryVersions(library);
+        setVersions(res.data.versions);
+        setSnapshot(res.data.snapshot);
+        // Only analyzed versions can be opened: show them alone when there are some
+        if (firstLoad) setShowAll(!res.data.versions.some((v) => v.analyzed));
       } catch (err) {
-        console.error("❌ Error fetching versions:", err);
-        setError("Failed to fetch versions.");
+        console.error("Error fetching versions:", err);
+        setError(err.response?.data?.error || "Failed to fetch versions.");
       } finally {
         setLoadingVersions(false);
       }
     };
 
     fetchVersions();
-  }, [library]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library, versionsLoads]);
+
+  useEffect(() => {
+    getAnalyzeConfig()
+      .then((res) => setAnalyzeConfig(res.data))
+      .catch(() => setAnalyzeConfig({ enabled: false }));
+  }, []);
+
+  // Analysis runs of this library, polled while one is requested, queued or running or
+  // the backend is reloading the results. The version list is fetched again when a run
+  // has succeeded or a reload has finished, so the version turns green.
+  useEffect(() => {
+    if (!library || !library.includes(":")) return;
+    let timer = null;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const res = await getAnalyzeStatus(library);
+        if (stopped) return;
+        const next = { ...res.data.versions };
+        // Analyses started from this page stay "requested" until GitHub lists their run
+        for (const [version, at] of Object.entries(localRequests.current)) {
+          if (!next[version] && Date.now() - at < REQUEST_VISIBLE_MS) next[version] = { state: "requested", url: null };
+        }
+        const succeeded = Object.entries(next).some(([version, run]) =>
+          run.state === "success" && previousRuns.current[version]?.state !== "success");
+        const reloaded = previousReloading.current && !res.data.reloading;
+        previousRuns.current = next;
+        previousReloading.current = res.data.reloading;
+        setRuns(next);
+        setResultsReloading(res.data.reloading);
+        if ((succeeded && previousPolled.current) || reloaded) setVersionsLoads((n) => n + 1);
+        previousPolled.current = true;
+        const waiting = res.data.reloading || Object.values(next).some((run) => ACTIVE_STATES.includes(run.state));
+        if (waiting) timer = setTimeout(poll, POLL_MS);
+      } catch (err) {
+        // Progress is shown again on the next poll or page load
+      }
+    };
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [library, pollKey]);
+
+  const handleAnalyze = async (version) => {
+    const release = `${library}:${version}`;
+    if (!window.confirm(
+      `Analyze ${release}?\n\nThe analysis runs on GitHub Actions and takes about 10 to 90 minutes. ` +
+      "You can leave this page; the version turns green here when the results are published.")) {
+      return;
+    }
+    setAnalyzeErrors((errors) => ({ ...errors, [version]: null }));
+    try {
+      const res = await startAnalysis(library, version);
+      // Shown as requested until GitHub lists the run; polling starts again
+      localRequests.current[version] = Date.now();
+      setRuns((current) => ({ ...current, [version]: { state: "requested", url: res.data.url || null } }));
+      setPollKey((n) => n + 1);
+    } catch (err) {
+      setAnalyzeErrors((errors) => ({
+        ...errors,
+        [version]: err.response?.data?.error || "Could not start the analysis.",
+      }));
+    }
+  };
 
   // Fetch analysis data when version is selected
   useEffect(() => {
@@ -447,16 +536,18 @@ const AnalysisPage = () => {
           ? library.split(":").pop()
           : library;
 
-        console.log("📊 Fetching analysis for:", cleanLibrary, selectedVersion);
+        console.log("Fetching analysis for:", cleanLibrary, selectedVersion);
         const res = await axios.get(`${API_BASE_URL}/api/analysisV2/usage`, {
           params: { library: cleanLibrary, version: selectedVersion, top },
         });
 
-        console.log("✅ Got analysis data:", res.data);
+        console.log("Got analysis data:", res.data);
         setData(res.data);
       } catch (err) {
-        console.error("❌ Error fetching analysis:", err);
-        setError("Failed to fetch analysis data.");
+        console.error("Error fetching analysis:", err);
+        setError(err.response?.status === 404
+          ? `${library} ${selectedVersion} has not been analyzed yet.`
+          : "Failed to fetch analysis data.");
       } finally {
         setLoading(false);
       }
@@ -466,7 +557,7 @@ const AnalysisPage = () => {
   }, [library, selectedVersion, top]);
 
   const handleVersionSelect = (version) => {
-    console.log("✅ Selected version:", version);
+    console.log("Selected version:", version);
     setSelectedVersion(version);
     setVersion(version);
     // Automatically navigate to maintainer summary when version is selected
@@ -508,7 +599,7 @@ const AnalysisPage = () => {
                 onClick={() => navigate("/")}
                 className="mb-4 text-gray-600 hover:text-gray-800 flex items-center mx-auto"
               >
-                ← Back to Home
+                Back to Home
               </button>
               <h1 className="text-4xl font-bold text-blue-800 mb-3">
                 Select a Version
@@ -536,29 +627,172 @@ const AnalysisPage = () => {
                 <p className="text-gray-500 text-center py-8">No versions found.</p>
               )}
 
-              {!loadingVersions && versions.length > 0 && (
+              {!loadingVersions && versions.length > 0 && (() => {
+                const analyzedCount = versions.filter((v) => v.analyzed).length;
+                // The cards show "v1.17.0": a leading v is not part of the version
+                const filter = versionFilter.trim().toLowerCase().replace(/^v(?=\d)/, "");
+                const shown = versions.filter((v) =>
+                  (showAll || v.analyzed) && (!filter || v.version.toLowerCase().includes(filter)));
+                return (
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-700 mb-6">
-                    Available Versions ({versions.length})
+                  <h2 className="text-lg font-semibold text-gray-700 mb-2">
+                    {versions.length.toLocaleString()} {versions.length === 1 ? "version" : "versions"}, {analyzedCount} analyzed
                   </h2>
-                  
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto p-2">
-                    {versions.map((version, i) => (
+                  <p className="text-sm text-gray-600 mb-4">
+                    Analyzed versions open the results. The others are on Maven Central but have not been
+                    analyzed yet; the number is how many projects depend on them.
+                    {snapshot && ` Dependents come from a Maven Central snapshot of ${snapshot}; versions released after it are marked "Released after the snapshot" and cannot be analyzed until the snapshot is updated.`}
+                    {analyzeConfig?.enabled && " Press Analyze on a version with dependents to start its analysis; it runs on GitHub Actions and takes about 10 to 90 minutes."}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
                       <button
-                        key={i}
-                        onClick={() => handleVersionSelect(version)}
-                        className="bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-600 hover:to-blue-700 text-gray-800 hover:text-white font-semibold py-4 px-4 rounded-xl border-2 border-blue-200 hover:border-blue-600 transition-all hover:scale-105 shadow-md"
+                        onClick={() => setShowAll(false)}
+                        disabled={analyzedCount === 0}
+                        className={`px-3 py-2 ${!showAll ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"} disabled:opacity-50`}
                       >
-                        v{version}
+                        Analyzed ({analyzedCount})
                       </button>
-                    ))}
+                      <button
+                        onClick={() => setShowAll(true)}
+                        className={`px-3 py-2 border-l border-gray-300 ${showAll ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        All versions ({versions.length.toLocaleString()})
+                      </button>
+                    </div>
+                    {versions.length > 20 && (
+                      <input
+                        type="text"
+                        value={versionFilter}
+                        onChange={(e) => setVersionFilter(e.target.value)}
+                        placeholder="Filter versions, e.g. 2.17"
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                    )}
+                    <span className="flex items-center gap-4 text-xs text-gray-600">
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-green-500 inline-block" /> Analyzed
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-amber-400 inline-block" /> Being analyzed
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-3 rounded bg-gray-300 inline-block" /> Not analyzed yet
+                      </span>
+                      {versions.some((v) => v.afterSnapshot) && (
+                        <span className="flex items-center gap-1">
+                          <span className="w-3 h-3 rounded bg-sky-300 inline-block" /> Released after the snapshot
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
+                  {shown.length === 0 && (
+                    <p className="text-gray-500 text-center py-8">No version matches "{versionFilter}".</p>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto p-2">
+                    {shown.map((v) => v.analyzed ? (
+                      <button
+                        key={v.version}
+                        onClick={() => handleVersionSelect(v.version)}
+                        className="text-left bg-green-50 hover:bg-green-600 text-gray-800 hover:text-white py-3 px-4 rounded-xl border-2 border-green-400 hover:border-green-600 transition-all hover:scale-105 shadow-md"
+                      >
+                        <span className="block font-semibold break-all">v{v.version}</span>
+                        <span className="block text-xs mt-1">Analyzed: view results</span>
+                      </button>
+                    ) : (() => {
+                      const run = runs[v.version];
+                      const active = run && ACTIVE_STATES.includes(run.state);
+                      const failed = run && FAILED_STATES.includes(run.state);
+                      const canAnalyze = analyzeConfig?.enabled && v.inIndex && v.dependents > 0;
+                      const githubLink = (text) => run?.url && (
+                        <a href={run.url} target="_blank" rel="noopener noreferrer"
+                           className="text-xs underline hover:no-underline">{text}</a>
+                      );
+                      if (active) {
+                        return (
+                          <div key={v.version} className="bg-amber-50 text-amber-900 py-3 px-4 rounded-xl border-2 border-amber-400">
+                            <span className="block font-semibold break-all">v{v.version}</span>
+                            <span className="block text-xs mt-1 font-semibold">{runLabel(run)}</span>
+                            {run.step && <span className="block text-xs mt-1">Step: {run.step}</span>}
+                            <span className="block mt-1">{githubLink("Follow it on GitHub")}</span>
+                          </div>
+                        );
+                      }
+                      if (run && run.state === "success" && (resultsReloading || run.loaded !== false)) {
+                        return (
+                          <div key={v.version} className="bg-green-50 text-green-900 py-3 px-4 rounded-xl border-2 border-dashed border-green-400">
+                            <span className="block font-semibold break-all">v{v.version}</span>
+                            <span className="block text-xs mt-1">Analysis finished, loading the results...</span>
+                          </div>
+                        );
+                      }
+                      if (run && run.state === "success") {
+                        return (
+                          <div key={v.version} className="bg-gray-50 text-gray-600 py-3 px-4 rounded-xl border-2 border-dashed border-gray-300">
+                            <span className="block font-semibold break-all">v{v.version}</span>
+                            <span className="block text-xs mt-1">
+                              The analysis finished, but no results for this version were published
+                              (for example, no dependent uses the library). {githubLink("See the run")}
+                            </span>
+                          </div>
+                        );
+                      }
+                      if (v.afterSnapshot) {
+                        return (
+                          <div key={v.version} className="bg-sky-50 text-sky-900 py-3 px-4 rounded-xl border-2 border-dashed border-sky-300">
+                            <span className="block font-semibold break-all">v{v.version}</span>
+                            <span className="block text-xs mt-1 font-semibold">Released after the snapshot</span>
+                            <span className="block text-xs mt-1">
+                              Released {v.released}, so its dependents are not known yet
+                            </span>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div
+                          key={v.version}
+                          className="bg-gray-50 text-gray-500 py-3 px-4 rounded-xl border-2 border-dashed border-gray-300"
+                        >
+                          <span className="block font-semibold break-all">v{v.version}</span>
+                          <span className="block text-xs mt-1">
+                            Not analyzed yet,{" "}
+                            {!v.inIndex
+                              ? "no dependents in the snapshot"
+                              : v.dependents > 0
+                                ? `${v.dependents.toLocaleString()} dependent ${v.dependents === 1 ? "project" : "projects"}`
+                                : "no dependents outside tests"}
+                          </span>
+                          {failed && (
+                            <span className="block text-xs mt-1 text-red-700">
+                              The last analysis did not finish. {githubLink("See why")}
+                            </span>
+                          )}
+                          {canAnalyze && (
+                            <button
+                              onClick={() => handleAnalyze(v.version)}
+                              className="mt-2 text-xs font-semibold bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition"
+                            >
+                              {failed ? "Analyze again" : "Analyze"}
+                            </button>
+                          )}
+                          {analyzeErrors[v.version] && (
+                            <span className="block text-xs mt-1 text-red-700">{analyzeErrors[v.version]}</span>
+                          )}
+                        </div>
+                      );
+                    })())}
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
 
             <footer className="mt-8 text-gray-500 text-sm text-center">
-              Click on any version to view the maintainer summary
+              Click an analyzed version to view its maintainer summary
+              {analyzeConfig?.enabled && "; press Analyze on another version to analyze it"}
             </footer>
           </div>
         </div>
@@ -579,7 +813,7 @@ const AnalysisPage = () => {
               onClick={() => setSelectedVersion("")}
               className="bg-gray-400 text-white px-4 py-2 rounded hover:bg-gray-500 transition"
             >
-              ← Change Version
+              Change Version
             </button>
             <h1 className="text-xl font-bold text-gray-800">
               {library} <span className="text-blue-600">v{selectedVersion}</span>
@@ -674,7 +908,7 @@ const AnalysisPage = () => {
                     <li
                       key={i}
                       onClick={() => {
-                        console.log("🚀 Navigating to dependent with:", { library, version: selectedVersion, dependent: d.dependent });
+                        console.log("Navigating to dependent with:", { library, version: selectedVersion, dependent: d.dependent });
                         navigate(pageUrl("/analysisV2/dependent", { library, version: selectedVersion, dependent: d.dependent }), {
                           state: { library, version: selectedVersion, dependent: d.dependent },
                         });

@@ -60,7 +60,7 @@ The dataset is only read. Fixes applied during conversion:
   rows were other Apache Commons libraries) and to shaded copies (e.g.
   `org.apache.juli.logging.com.fasterxml.jackson.databind`).
 - **Constructors are `<init>` everywhere,** so they match their coverage
-  (commons-codec 1.17.1: 568 → 700 of 728 APIs matched to coverage).
+  (commons-codec 1.17.1: from 568 to 700 of 728 APIs matched to coverage).
 
 Converted versions keep the limits of the original data: the API list has no protected
 members, and usage is recorded on the class named in the bytecode rather than the

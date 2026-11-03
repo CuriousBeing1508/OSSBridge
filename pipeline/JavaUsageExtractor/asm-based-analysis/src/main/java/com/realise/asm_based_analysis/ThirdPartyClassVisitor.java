@@ -128,7 +128,7 @@ public class ThirdPartyClassVisitor extends ClassVisitor {
         if (isPrimitiveOrPrimitiveArray(className)) return false;
         if (ExtractLibraryUsageFromJar.JDK_PREFIXES.stream().anyMatch(className::startsWith)) return false;
 
-        // ✅ FIX: Changed from contains to startsWith
+        // Fix: Changed from contains to startsWith
         return targetApiPackages.stream().anyMatch(className::startsWith);
     }
 

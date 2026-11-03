@@ -132,8 +132,10 @@ Columns:
 
 `dependents-index/` holds the index of which projects depend on which library version
 that the pipeline selects dependents from: `edges.parquet` (every dependency in the Goblin
-graph of Maven Central) and `reach.parquet` (for each artifact, the number of distinct
-artifacts that depend on any of its versions).
+graph of Maven Central), `releases.parquet` (the release date of each dependent release),
+`reach.parquet` (for each artifact, the number of distinct artifacts that depend on any of
+its versions), and the summaries `versions.parquet` and `libraries.parquet` (dependent
+projects per library version and per library).
 
 ## How the data is produced
 
@@ -156,7 +158,7 @@ Every downloaded jar's SHA-256 and the analyzer's SHA-256 are kept in the run su
 
 ## Limitations
 
-- Dependents come from a snapshot of Maven Central (Goblin, 30 August 2024); releases after
+- Dependents come from a snapshot of Maven Central (Goblin, 20 April 2025); releases after
   it have no dependents in the index.
 - Versions analyzed before the index had reach values (31 October 2026) selected all
   dependents at random; each run's settings, including `top_target`, are in `runs`.
