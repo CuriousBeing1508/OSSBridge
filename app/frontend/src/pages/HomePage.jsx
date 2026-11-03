@@ -127,7 +127,7 @@
 //               {!loading && libraries.length > 0 && !selectedLib && (
 //                 <div>
 //                   <label className="block mb-3 font-semibold text-gray-700 text-lg">
-//                     Select a library:
+//                     Pick a library
 //                   </label>
 //                   <select
 //                     className="w-full border-2 border-gray-300 p-4 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none text-lg shadow-sm"
@@ -177,7 +177,7 @@
 
 //           {/* Footer */}
 //           <footer className="mt-8 text-gray-600 text-sm text-center">
-//             © {new Date().getFullYear()} OSSBridge — Empowering Open Source Analysis
+//             © {new Date().getFullYear()} OSSBridge
 //           </footer>
 //         </div>
 //       </div>
@@ -202,7 +202,7 @@ const plural = (count, word) => `${count.toLocaleString()} ${word}${count === 1 
 const StatusBadge = ({ analyzedVersions }) =>
   analyzedVersions > 0 ? (
     <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-800 border border-green-300">
-      Analyzed: {plural(analyzedVersions, "version")}
+      {plural(analyzedVersions, "version")} analyzed
     </span>
   ) : (
     <span className="shrink-0 text-xs font-semibold px-2 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-300">
@@ -302,7 +302,7 @@ const HomePage = () => {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       onKeyPress={handleKeyPress}
-                      placeholder="Search any Java library on Maven Central (ex. jackson-databind)..."
+                      placeholder="Search a Java library, for example jackson-databind"
                       className="w-full px-5 py-4 pr-14 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none text-lg shadow-sm"
                     />
                     <button
@@ -321,7 +321,7 @@ const HomePage = () => {
 
               {!loading && searched && libraries.length === 0 && !selectedLib && (
                 <p className="text-gray-500 py-6 text-center">
-                  No library matches "{searchQuery}". Search by groupId or artifactId, e.g. jackson-databind.
+                  No library matches "{searchQuery}". Try a groupId or artifactId, for example jackson-databind.
                 </p>
               )}
 
@@ -329,11 +329,11 @@ const HomePage = () => {
               {!loading && libraries.length > 0 && !selectedLib && (
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700 text-lg">
-                    Select a library:
+                    Pick a library
                   </label>
                   <p className="text-sm text-gray-500 mb-3">
-                    Libraries with analyzed versions are listed first
-                    {libraries.length === 50 ? "; showing the first 50 matches, refine the search to see others" : ""}.
+                    Libraries with analyzed versions come first.
+                    {libraries.length === 50 ? " Only the first 50 matches are shown, so try a longer search to find others." : ""}
                   </p>
                   <ul className="max-h-96 overflow-y-auto border-2 border-gray-200 rounded-xl divide-y divide-gray-200 bg-white">
                     {libraries.map((lib) => (
@@ -346,10 +346,10 @@ const HomePage = () => {
                             <span className="block font-mono text-sm text-gray-800 break-all">{lib.library}</span>
                             <span className="block text-xs text-gray-500 mt-1">
                               {lib.inIndex
-                                ? `${plural(lib.indexVersions, "version")}, ${plural(lib.dependents, "dependent project")}`
+                                ? `${plural(lib.indexVersions, "version")}, used by ${plural(lib.dependents, "project")}`
                                 : lib.mavenVersions
-                                  ? `${plural(lib.mavenVersions, "version")} on Maven Central, no dependents in the snapshot`
-                                  : "Not in the dependents index"}
+                                  ? "Too new, no project in our data uses it yet"
+                                  : "Not in our data"}
                             </span>
                           </span>
                           <StatusBadge analyzedVersions={lib.analyzedVersions} />
@@ -369,8 +369,8 @@ const HomePage = () => {
                     </p>
                     <p className="text-gray-600 text-lg">
                       {selectedInfo && selectedInfo.analyzedVersions > 0
-                        ? `${plural(selectedInfo.analyzedVersions, "analyzed version")}. Explore them, or see which versions are not analyzed yet.`
-                        : "No version of this library has been analyzed yet. See its versions and their dependents."}
+                        ? `${plural(selectedInfo.analyzedVersions, "version")} analyzed so far. Open the list to see them and the other versions.`
+                        : "No version of this library has been analyzed yet. Open the list to see its versions and how many projects use each one."}
                     </p>
                   </div>
                   
@@ -395,7 +395,7 @@ const HomePage = () => {
 
           {/* Footer */}
           <footer className="mt-8 text-gray-600 text-sm text-center">
-            © {new Date().getFullYear()} OSSBridge — Empowering Open Source Analysis
+            © {new Date().getFullYear()} OSSBridge
           </footer>
         </div>
       </div>

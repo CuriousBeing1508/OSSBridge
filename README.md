@@ -91,13 +91,12 @@ the log; the app keeps running.
 
 Go to http://localhost:3000 (the backend API is on http://localhost:5050). For example:
 
-- search `mybatis`: `org.mybatis:mybatis` is marked "Analyzed: 3 versions"; open it and switch
-  to **All versions** to see the analyzed versions and the ones not analyzed yet, with their
-  number of dependent projects;
-- open an analyzed version for its maintainer summary and its tabs;
-- versions released after the dependents snapshot (20 April 2025) are listed from Maven
-  Central and marked "Released after the snapshot", with their release date from deps.dev;
-  e.g. `org.mybatis:mybatis` 3.6.0.
+- Search for `mybatis`. `org.mybatis:mybatis` shows "3 versions analyzed". Open it and switch
+  to **All versions** to see the analyzed versions and the others, with how many projects use
+  each one.
+- Open an analyzed version to see its maintainer summary and tabs.
+- Versions released after the dependents snapshot (20 April 2025) are not listed, and a note
+  under the list says why. For `org.mybatis:mybatis` it is 3.6.0.
 
 If the browser shows an older version of the page, reload it with Cmd+Shift+R (Ctrl+Shift+R
 on Windows and Linux).

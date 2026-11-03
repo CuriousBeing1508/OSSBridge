@@ -381,6 +381,24 @@ const FAILED_STATES = ["failure", "cancelled", "timed_out", "startup_failure"];
 const POLL_MS = 20000;
 const REQUEST_VISIBLE_MS = 3 * 60 * 1000;
 
+// "2025-04-20" as "20 April 2025"
+const longDate = (date) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB",
+  { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+// What the current step of analyze-library.yml does, in plain words
+const STEP_LABELS = {
+  "1 Dependents": "Finding the projects that use it",
+  "2-3 Download and analyze dependents": "Downloading and checking the projects that use it",
+  "4 Library API": "Reading the library's API",
+  "5 Test coverage": "Running the library's tests",
+  "6 API coverage": "Comparing use with test coverage",
+  "7 Store results": "Saving the results",
+  "Publish to Hugging Face": "Publishing the results",
+  "Run summary": "Finishing",
+  "Attach run.json, summaries and build logs": "Finishing",
+};
+const stepLabel = (step) => STEP_LABELS[step] || "Getting ready";
+
 const runLabel = (run) =>
   run.state === "in_progress" ? "Analysis running"
     : run.state === "requested" ? "Analysis requested"
@@ -400,9 +418,11 @@ const AnalysisPage = () => {
   console.log("Received library:", library);
   console.log("Received version:", stateVersion);
 
-  // [{ version, dependents, analyzed, inIndex, released, afterSnapshot }], newest first
+  // [{ version, dependents, analyzed, inIndex }], newest first
   const [versions, setVersions] = useState([]);
   const [snapshot, setSnapshot] = useState(null);
+  // Releases on Maven Central that are not listed (not in the dependents index)
+  const [notListed, setNotListed] = useState(0);
   const [showAll, setShowAll] = useState(true);
   const [versionFilter, setVersionFilter] = useState("");
   // Analyses: whether they can be started here, the latest run per version, errors
@@ -447,6 +467,7 @@ const AnalysisPage = () => {
         const res = await getLibraryVersions(library);
         setVersions(res.data.versions);
         setSnapshot(res.data.snapshot);
+        setNotListed(res.data.notListed || 0);
         // Only analyzed versions can be opened: show them alone when there are some
         if (firstLoad) setShowAll(!res.data.versions.some((v) => v.analyzed));
       } catch (err) {
@@ -505,8 +526,8 @@ const AnalysisPage = () => {
   const handleAnalyze = async (version) => {
     const release = `${library}:${version}`;
     if (!window.confirm(
-      `Analyze ${release}?\n\nThe analysis runs on GitHub Actions and takes about 10 to 90 minutes. ` +
-      "You can leave this page; the version turns green here when the results are published.")) {
+      `Start the analysis of ${release}?\n\nIt runs on GitHub and takes 10 to 15 minutes on average. ` +
+      "You can leave this page. The version turns green here when the results are ready.")) {
       return;
     }
     setAnalyzeErrors((errors) => ({ ...errors, [version]: null }));
@@ -624,7 +645,11 @@ const AnalysisPage = () => {
               )}
 
               {!loadingVersions && !error && versions.length === 0 && (
-                <p className="text-gray-500 text-center py-8">No versions found.</p>
+                <p className="text-gray-500 text-center py-8">
+                  {notListed > 0
+                    ? "None of its versions are listed because no project in our data uses them yet."
+                    : "No versions found."}
+                </p>
               )}
 
               {!loadingVersions && versions.length > 0 && (() => {
@@ -639,10 +664,9 @@ const AnalysisPage = () => {
                     {versions.length.toLocaleString()} {versions.length === 1 ? "version" : "versions"}, {analyzedCount} analyzed
                   </h2>
                   <p className="text-sm text-gray-600 mb-4">
-                    Analyzed versions open the results. The others are on Maven Central but have not been
-                    analyzed yet; the number is how many projects depend on them.
-                    {snapshot && ` Dependents come from a Maven Central snapshot of ${snapshot}; versions released after it are marked "Released after the snapshot" and cannot be analyzed until the snapshot is updated.`}
-                    {analyzeConfig?.enabled && " Press Analyze on a version with dependents to start its analysis; it runs on GitHub Actions and takes about 10 to 90 minutes."}
+                    Click a green version to see its results. For the other versions you can see how many
+                    projects use them.
+                    {analyzeConfig?.enabled && " Press Analyze to study one of them. The analysis runs on GitHub and takes 10 to 15 minutes on average."}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -666,7 +690,7 @@ const AnalysisPage = () => {
                         type="text"
                         value={versionFilter}
                         onChange={(e) => setVersionFilter(e.target.value)}
-                        placeholder="Filter versions, e.g. 2.17"
+                        placeholder="Filter, for example 2.17"
                         className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:border-blue-500 focus:outline-none"
                       />
                     )}
@@ -680,11 +704,6 @@ const AnalysisPage = () => {
                       <span className="flex items-center gap-1">
                         <span className="w-3 h-3 rounded bg-gray-300 inline-block" /> Not analyzed yet
                       </span>
-                      {versions.some((v) => v.afterSnapshot) && (
-                        <span className="flex items-center gap-1">
-                          <span className="w-3 h-3 rounded bg-sky-300 inline-block" /> Released after the snapshot
-                        </span>
-                      )}
                     </span>
                   </div>
 
@@ -700,15 +719,18 @@ const AnalysisPage = () => {
                         className="text-left bg-green-50 hover:bg-green-600 text-gray-800 hover:text-white py-3 px-4 rounded-xl border-2 border-green-400 hover:border-green-600 transition-all hover:scale-105 shadow-md"
                       >
                         <span className="block font-semibold break-all">v{v.version}</span>
-                        <span className="block text-xs mt-1">Analyzed: view results</span>
+                        <span className="block text-xs mt-1">Analyzed, see the results</span>
                       </button>
                     ) : (() => {
                       const run = runs[v.version];
                       const active = run && ACTIVE_STATES.includes(run.state);
                       const failed = run && FAILED_STATES.includes(run.state);
                       const canAnalyze = analyzeConfig?.enabled && v.inIndex && v.dependents > 0;
-                      const githubLink = (text) => run?.url && (
-                        <a href={run.url} target="_blank" rel="noopener noreferrer"
+                      // The run on GitHub Actions, or the workflow's list of runs before GitHub lists it
+                      const runUrl = run?.url || (analyzeConfig?.repo
+                        && `https://github.com/${analyzeConfig.repo}/actions/workflows/analyze-library.yml`);
+                      const githubLink = (text) => runUrl && (
+                        <a href={runUrl} target="_blank" rel="noopener noreferrer"
                            className="text-xs underline hover:no-underline">{text}</a>
                       );
                       if (active) {
@@ -716,7 +738,7 @@ const AnalysisPage = () => {
                           <div key={v.version} className="bg-amber-50 text-amber-900 py-3 px-4 rounded-xl border-2 border-amber-400">
                             <span className="block font-semibold break-all">v{v.version}</span>
                             <span className="block text-xs mt-1 font-semibold">{runLabel(run)}</span>
-                            {run.step && <span className="block text-xs mt-1">Step: {run.step}</span>}
+                            {run.step && <span className="block text-xs mt-1">{stepLabel(run.step)}</span>}
                             <span className="block mt-1">{githubLink("Follow it on GitHub")}</span>
                           </div>
                         );
@@ -725,7 +747,7 @@ const AnalysisPage = () => {
                         return (
                           <div key={v.version} className="bg-green-50 text-green-900 py-3 px-4 rounded-xl border-2 border-dashed border-green-400">
                             <span className="block font-semibold break-all">v{v.version}</span>
-                            <span className="block text-xs mt-1">Analysis finished, loading the results...</span>
+                            <span className="block text-xs mt-1">Finished. Loading the results...</span>
                           </div>
                         );
                       }
@@ -734,19 +756,8 @@ const AnalysisPage = () => {
                           <div key={v.version} className="bg-gray-50 text-gray-600 py-3 px-4 rounded-xl border-2 border-dashed border-gray-300">
                             <span className="block font-semibold break-all">v{v.version}</span>
                             <span className="block text-xs mt-1">
-                              The analysis finished, but no results for this version were published
-                              (for example, no dependent uses the library). {githubLink("See the run")}
-                            </span>
-                          </div>
-                        );
-                      }
-                      if (v.afterSnapshot) {
-                        return (
-                          <div key={v.version} className="bg-sky-50 text-sky-900 py-3 px-4 rounded-xl border-2 border-dashed border-sky-300">
-                            <span className="block font-semibold break-all">v{v.version}</span>
-                            <span className="block text-xs mt-1 font-semibold">Released after the snapshot</span>
-                            <span className="block text-xs mt-1">
-                              Released {v.released}, so its dependents are not known yet
+                              The analysis finished but had no results to publish. This happens when
+                              none of the projects actually call the library. {githubLink("See the run on GitHub")}
                             </span>
                           </div>
                         );
@@ -757,17 +768,15 @@ const AnalysisPage = () => {
                           className="bg-gray-50 text-gray-500 py-3 px-4 rounded-xl border-2 border-dashed border-gray-300"
                         >
                           <span className="block font-semibold break-all">v{v.version}</span>
-                          <span className="block text-xs mt-1">
-                            Not analyzed yet,{" "}
-                            {!v.inIndex
-                              ? "no dependents in the snapshot"
-                              : v.dependents > 0
-                                ? `${v.dependents.toLocaleString()} dependent ${v.dependents === 1 ? "project" : "projects"}`
-                                : "no dependents outside tests"}
+                          <span className="block text-xs mt-1">Not analyzed yet</span>
+                          <span className="block text-xs">
+                            {v.dependents > 0
+                              ? `Used by ${v.dependents.toLocaleString()} ${v.dependents === 1 ? "project" : "projects"}`
+                              : "Only used in tests"}
                           </span>
                           {failed && (
                             <span className="block text-xs mt-1 text-red-700">
-                              The last analysis did not finish. {githubLink("See why")}
+                              The last analysis did not finish. {githubLink("See why on GitHub")}
                             </span>
                           )}
                           {canAnalyze && (
@@ -788,11 +797,18 @@ const AnalysisPage = () => {
                 </div>
                 );
               })()}
+
+              {!loadingVersions && !error && notListed > 0 && snapshot && (
+                <p className="text-sm text-gray-500 mt-6">
+                  Our dashboard contains insights from Maven Central dump as of {longDate(snapshot)}, so
+                  newer releases are not in it yet. We also exclude versions for which no direct dependent
+                  projects are found.
+                </p>
+              )}
             </div>
 
             <footer className="mt-8 text-gray-500 text-sm text-center">
-              Click an analyzed version to view its maintainer summary
-              {analyzeConfig?.enabled && "; press Analyze on another version to analyze it"}
+              Click a green version to see its results
             </footer>
           </div>
         </div>

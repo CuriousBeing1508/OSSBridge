@@ -13,7 +13,7 @@ const SearchBox = ({ onSearch }) => {
     <form onSubmit={handleSubmit} className="flex flex-col items-center mt-6">
       <input
         type="text"
-        placeholder="Enter a library name (e.g., jackson)"
+        placeholder="Enter a library name, for example jackson"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         className="border p-2 rounded w-64 mb-3 text-center focus:outline-none focus:ring-2 focus:ring-blue-400"

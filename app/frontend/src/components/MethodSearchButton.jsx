@@ -91,7 +91,7 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder="Search methods (e.g., readValue, writeValue)..."
+                placeholder="Search methods, for example readValue"
                 className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button

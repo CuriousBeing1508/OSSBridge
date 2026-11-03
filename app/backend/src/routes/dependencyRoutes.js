@@ -1,6 +1,6 @@
 const express = require("express");
 const results = require("../results");
-const { GA, mavenReleases, releaseDates } = require("../mavenCentral");
+const { GA, mavenReleases } = require("../mavenCentral");
 
 const router = express.Router();
 
@@ -58,14 +58,11 @@ router.get("/search", async (req, res) => {
   }
 });
 
-// All versions of a library, newest first, each marked analyzed or not:
-//   - releases on Maven Central (maven-metadata.xml), with their number of dependent
-//     projects in the dependents index (none for releases after the snapshot);
-//   - analyzed versions.
-// Versions dependents declared that are not releases are left out. Without Maven
-// Central, the dependents index versions are listed. Each version has its release
-// date from deps.dev when known, and afterSnapshot when it was released after the
-// snapshot, so its dependents are not in the index yet.
+// The versions of a library in the dependents index, plus the analyzed ones, newest
+// first, each with its number of dependent projects and marked analyzed or not.
+// Versions dependents declared that are not releases on Maven Central
+// (maven-metadata.xml) are left out. notListed counts the Maven Central releases
+// that are not in the index, mostly releases after the snapshot.
 // http://localhost:5050/api/dependencies/library?library=org.slf4j:slf4j-api
 router.get("/library", async (req, res) => {
   try {
@@ -84,8 +81,8 @@ router.get("/library", async (req, res) => {
     if (!match) {
       return res.status(404).json({
         error: available
-          ? `${library} is not in the dependents index (Maven Central snapshot of ${snapshot}) and has no results`
-          : `No results for ${library}`,
+          ? `${library} is not in our data and has not been analyzed`
+          : `${library} has not been analyzed`,
         snapshot,
       });
     }
@@ -97,19 +94,14 @@ router.get("/library", async (req, res) => {
       FULL JOIN (SELECT version FROM library_versions WHERE library_ga = $ga) a
         ON a.version = i.library_version`, { ga: match.library });
 
-    const [releases, dates] = await Promise.all(
-      [mavenReleases(match.library), releaseDates(match.library)]);
+    const releases = await mavenReleases(match.library);
     let versions = rows;
+    let notListed = 0;
     if (releases && releases.length) {
       const known = new Set(rows.map((r) => r.version));
       const released = new Set(releases);
-      versions = rows.filter((r) => r.analyzed || released.has(r.version))
-        .concat(releases.filter((v) => !known.has(v))
-          .map((version) => ({ version, dependents: null, analyzed: false, inIndex: false })));
-    }
-    for (const v of versions) {
-      v.released = dates?.get(v.version) ?? null;
-      v.afterSnapshot = Boolean(!v.inIndex && snapshot && v.released && v.released > snapshot);
+      versions = rows.filter((r) => r.analyzed || released.has(r.version));
+      notListed = releases.filter((v) => !known.has(v)).length;
     }
     versions.sort((x, y) => results.compareVersions(y.version, x.version));
     res.json({
@@ -117,6 +109,7 @@ router.get("/library", async (req, res) => {
       indexAvailable: available,
       snapshot,
       mavenCentral: Boolean(releases && releases.length),
+      notListed,
       versions,
     });
   } catch (err) {

@@ -166,7 +166,7 @@ router.get("/config", (req, res) => {
 // http://localhost:5050/api/analyze/status?library=org.mybatis:mybatis
 router.get("/status", async (req, res) => {
   const { library } = req.query;
-  if (!library || !GA.test(library)) return res.status(400).json({ error: "library must be groupId:artifactId" });
+  if (!library || !GA.test(library)) return res.status(400).json({ error: "Give the library as groupId:artifactId" });
   try {
     const runs = await recentRuns();
     const prefix = `${library}:`;
@@ -200,7 +200,7 @@ router.get("/status", async (req, res) => {
     }
     res.json({ library, reloading: Boolean(reloading), versions });
   } catch (err) {
-    res.status(502).json({ error: `Could not read the analysis runs: ${err.message}` });
+    res.status(502).json({ error: `Could not read the analysis runs. ${err.message}` });
   }
 });
 
@@ -210,10 +210,10 @@ router.get("/status", async (req, res) => {
 router.post("/", async (req, res) => {
   const { library, version } = req.body || {};
   if (!TOKEN) {
-    return res.status(503).json({ error: "Starting analyses is not enabled on this server (no GitHub token)." });
+    return res.status(503).json({ error: "Analyses cannot be started from this site right now." });
   }
   if (!library || !GA.test(library) || !version || !VERSION.test(version)) {
-    return res.status(400).json({ error: "library (groupId:artifactId) and version are required" });
+    return res.status(400).json({ error: "Give a library as groupId:artifactId and a version" });
   }
   const release = `${library}:${version}`;
   try {
@@ -230,7 +230,7 @@ router.post("/", async (req, res) => {
         { ga: library, version });
       if (!row || !row.dependents) {
         return res.status(400).json({
-          error: `${release} has no dependents in the Maven Central snapshot (${results.index().snapshot}), so there is no usage to analyze.`,
+          error: `No project in our data uses ${release}, so there is nothing to analyze.`,
         });
       }
     }
@@ -244,14 +244,14 @@ router.post("/", async (req, res) => {
     const running = runs.filter(isActive).length;
     if (running >= MAX_RUNNING) {
       return res.status(429).json({
-        error: `${running} analyses are already queued or running (at most ${MAX_RUNNING} at once). Please try again later.`,
+        error: `${running} analyses are already running and the limit is ${MAX_RUNNING} at a time. Please try again later.`,
       });
     }
     const hourAgo = Date.now() - 60 * 60 * 1000;
     const lastHour = runs.filter((run) => run.event === "workflow_dispatch" && Date.parse(run.createdAt) > hourAgo).length;
     if (lastHour >= MAX_PER_HOUR) {
       return res.status(429).json({
-        error: `${lastHour} analyses were started in the last hour (at most ${MAX_PER_HOUR}). Please try again later.`,
+        error: `${lastHour} analyses were started in the last hour and the limit is ${MAX_PER_HOUR}. Please try again later.`,
       });
     }
 
@@ -265,7 +265,7 @@ router.post("/", async (req, res) => {
     console.log(`[INFO] Started the analysis of ${release} [${requestId}]`);
     res.status(202).json({ release, requestId });
   } catch (err) {
-    res.status(502).json({ error: `Could not start the analysis: ${err.message}` });
+    res.status(502).json({ error: `Could not start the analysis. ${err.message}` });
   }
 });
 
