@@ -227,6 +227,25 @@ def test_every_failure_status_has_a_hint():
     assert "--jdk" in coverage.hint("build_failed") and coverage.ISSUES_URL in coverage.hint("build_failed")
 
 
+def test_reason_is_plain_and_the_error_is_raw():
+    summary = {"status": "no_repository", "version": "1.6.1", "detail": "no GitHub repository in the POM's <scm>"}
+    assert coverage.reason(summary).startswith("The library's POM on Maven Central does not link to a GitHub")
+    assert coverage.error_details(summary) == "no GitHub repository in the POM's <scm>"
+
+    summary = {"status": "build_failed", "jdks_tried": [8, 11, 8], "detail": "no tests ran with JDK 8, 11",
+               "attempts": [{"jdk": 8, "disabled_profiles": [], "reason": "Source option 5 is no longer supported."},
+                            {"jdk": 8, "disabled_profiles": ["java9+"], "reason": "no tests ran"}]}
+    assert coverage.reason(summary) == ("We could not build the library's source code and run its tests "
+                                        "(tried Java 8, 11).")
+    assert coverage.error_details(summary) == ("JDK 8: Source option 5 is no longer supported.\n"
+                                               "JDK 8 without JDK profiles: no tests ran")
+
+    assert coverage.reason({"status": "timeout"}, timeout=2700) == (
+        "The library's tests did not finish within our time limit of 45 minutes.")
+    assert "problem on our side" in coverage.reason({"status": "no_jdk"})
+    assert coverage.reason({"status": "ok"}) is None and coverage.error_details({"status": "ok"}) is None
+
+
 def test_first_error_skips_headers(tmp_path):
     log = tmp_path / "build.log"
     write(log, "[ERROR] COMPILATION ERROR : \n[INFO] ----\n[ERROR] invalid source release 14 with --enable-preview\n")

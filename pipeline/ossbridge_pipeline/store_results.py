@@ -20,8 +20,8 @@ replacing any earlier tables of the same library version:
     runs              one row with the run's summaries (collection.json,
                       coverage.json) as JSON
 
-Tables whose step has no output (e.g. coverage failed) are not written; the
-summary row says why.
+Tables whose step has no output are not written. When there is no coverage, the
+summary row has a plain reason for app users and the raw error.
 
 USAGE:
     python -m ossbridge_pipeline.store_results --library commons-codec:commons-codec --version 1.17.1
@@ -39,6 +39,8 @@ from xml.etree import ElementTree
 import duckdb
 
 from . import result_tables
+from .coverage import NOT_RUN, OUR_PROBLEM, error_details
+from .coverage import reason as coverage_reason_of
 from .paths import RESULTS_DIR
 from .workspace import Workspace
 
@@ -148,6 +150,17 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         api_coverage_pct = round(100 * covered / reachable, 1) if reachable else None
 
     tests = (coverage or {}).get("tests") or {}
+    coverage_status = (coverage or {}).get("status", "not_run")
+    if coverage_status == "not_run":
+        coverage_reason, coverage_error = NOT_RUN, None
+    else:
+        # Older coverage.json files have no reason or error.
+        coverage_reason = coverage.get("reason") or coverage_reason_of(coverage)
+        coverage_error = coverage.get("error") or error_details(coverage)
+    if coverage_status == "ok" and api_coverage_pct is None and not ws.api_coverage_csv.exists():
+        # Coverage was measured but step 6 failed.
+        coverage_status, coverage_reason = "no_api_coverage", OUR_PROBLEM
+        coverage_error = "step 6 (API coverage) wrote no api-coverage.csv; see run.json"
     instructions_missed, instructions_covered = report_instructions(ws.coverage_xml)
     result_tables.write_table(results_dir, "library_versions", ga, v, [{
         "library_ga": ga, "version": v, "packages": jar_packages(ws.library_jar), "run_id": run_id,
@@ -156,7 +169,9 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         "dependents_using": (collection or {}).get("using_library"),
         "dependents_selected": (collection or {}).get("selected"),
         "target_reached": (collection or {}).get("target_reached"),
-        "coverage_status": (coverage or {}).get("status", "not_run"),
+        "coverage_status": coverage_status,
+        "coverage_reason": coverage_reason,
+        "coverage_error": coverage_error,
         "tests": tests.get("tests"),
         "api_coverage_pct": api_coverage_pct,
         "instructions_missed": instructions_missed,

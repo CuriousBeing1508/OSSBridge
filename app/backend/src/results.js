@@ -211,6 +211,20 @@ async function libraryVersion(req, res) {
   return { ga, version, summary: rows[0] };
 }
 
+/**
+ * Whether a version has test coverage, and why not if it has none.
+ * Results stored before reasons were added get a general reason.
+ */
+function coverage(summary) {
+  if (summary.coverage_status === "ok") return { available: true, status: "ok", reason: null, error: null };
+  return {
+    available: false,
+    status: summary.coverage_status,
+    reason: summary.coverage_reason || "Test coverage could not be measured for this version.",
+    error: summary.coverage_error || null,
+  };
+}
+
 module.exports = {
   RESULTS_PATH,
   INDEX_PATH,
@@ -221,5 +235,6 @@ module.exports = {
   resolveLibrary,
   compareVersions,
   libraryVersion,
+  coverage,
   loadedAt: () => loadedAt,
 };

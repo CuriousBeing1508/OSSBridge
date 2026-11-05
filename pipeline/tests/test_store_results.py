@@ -83,7 +83,10 @@ def make_run(tmp_path, with_coverage=True):
                                    '<counter type="INSTRUCTION" missed="30" covered="70"/>'
                                    '<counter type="LINE" missed="3" covered="7"/></report>')
     else:
-        ws.coverage_json.write_text(json.dumps({"status": "build_failed", "tests": None}))
+        ws.coverage_json.write_text(json.dumps({
+            "status": "build_failed", "tests": None, "jdks_tried": [8, 11], "detail": "no tests ran with JDK 8, 11",
+            "attempts": [{"jdk": 8, "reason": "Source option 5 is no longer supported."},
+                         {"jdk": 11, "reason": "Source option 5 is no longer supported."}]}))
     return ws
 
 
@@ -122,6 +125,33 @@ def test_new_run_replaces_the_tables_of_the_version(tmp_path):
     assert con.execute("SELECT count(*) FROM api_coverage").fetchone() == (0,)   # old coverage removed
     assert con.execute("SELECT coverage_status, tests, api_coverage_pct FROM library_versions").fetchall() == [
         ("build_failed", None, None)]
+
+
+def test_missing_coverage_is_stored_with_a_reason_and_the_raw_error(tmp_path):
+    results = tmp_path / "results"
+    store_results.store(make_run(tmp_path, with_coverage=False), results)
+    con = result_tables.connect(results)
+    assert con.execute("SELECT coverage_reason, coverage_error FROM library_versions").fetchall() == [(
+        "We could not build the library's source code and run its tests (tried Java 8, 11).",
+        "JDK 8: Source option 5 is no longer supported.\nJDK 11: Source option 5 is no longer supported.")]
+
+
+def test_coverage_that_was_not_run_says_so(tmp_path):
+    ws = make_run(tmp_path, with_coverage=False)
+    ws.coverage_json.unlink()
+    store_results.store(ws, tmp_path / "results")
+    con = result_tables.connect(tmp_path / "results")
+    assert con.execute("SELECT coverage_status, coverage_reason FROM library_versions").fetchall() == [
+        ("not_run", "Test coverage was not measured in this analysis.")]
+
+
+def test_coverage_without_api_coverage_is_not_shown_as_measured(tmp_path):
+    ws = make_run(tmp_path)
+    ws.api_coverage_csv.unlink()
+    store_results.store(ws, tmp_path / "results")
+    con = result_tables.connect(tmp_path / "results")
+    status, reason = con.execute("SELECT coverage_status, coverage_reason FROM library_versions").fetchone()
+    assert status == "no_api_coverage" and "problem on our side" in reason
 
 
 def test_converter_tables_get_null_columns(tmp_path):

@@ -60,6 +60,14 @@ function apiGroups({ ga, version }) {
     GROUP BY m.signature ORDER BY m.signature`, { ga, version });
 }
 
+/** Sends why there is no test coverage and returns true, or returns false when there is coverage. */
+function noCoverage(lv, res) {
+  const coverage = results.coverage(lv.summary);
+  if (coverage.available) return false;
+  res.status(404).json({ error: coverage.reason, coverage });
+  return true;
+}
+
 /** Instruction coverage of the whole library; pct is null for results stored without it. */
 function projectCoverage(summary) {
   const covered = summary.instructions_covered || 0;
@@ -175,6 +183,7 @@ router.get("/maintainer-summary", handle("maintainer-summary", async (req, res) 
     uniqueMethods: totals.methods,
     categoryDistribution: Object.fromEntries(categories.map((c) => [c.category, c.n])),
     topMethods,
+    testCoverage: results.coverage(lv.summary),
   });
 }));
 
@@ -294,12 +303,7 @@ router.get("/api-surface-usage", handle("api-surface-usage", async (req, res) =>
  */
 router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (req, res) => {
   const lv = await results.libraryVersion(req, res);
-  if (!lv) return;
-  if (lv.summary.coverage_status !== "ok") {
-    return res.status(404).json({
-      error: `No test coverage for ${req.query.library} ${lv.version}: ${lv.summary.coverage_status}`,
-    });
-  }
+  if (!lv || noCoverage(lv, res)) return;
 
   const project = projectCoverage(lv.summary);
   const used = (await apiGroups(lv)).filter((g) => g.used);
@@ -389,12 +393,7 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
  */
 router.get("/community-test-coverage", handle("community-test-coverage", async (req, res) => {
   const lv = await results.libraryVersion(req, res);
-  if (!lv) return;
-  if (lv.summary.coverage_status !== "ok") {
-    return res.status(404).json({
-      error: `No test coverage for ${req.query.library} ${lv.version}: ${lv.summary.coverage_status}`,
-    });
-  }
+  if (!lv || noCoverage(lv, res)) return;
   const params = { ga: lv.ga, version: lv.version };
 
   // Status of each API a dependent uses, from the overloads it uses

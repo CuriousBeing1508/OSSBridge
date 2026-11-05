@@ -40,6 +40,8 @@ TABLES = {
         ("dependents_selected", pa.int64()),
         ("target_reached", pa.bool_()),
         ("coverage_status", pa.string()),       # ok, or why there is no coverage (coverage.json)
+        ("coverage_reason", pa.string()),       # plain reason when there is no coverage
+        ("coverage_error", pa.string()),        # raw error when there is no coverage
         ("tests", pa.int64()),                  # tests run by the library's own suite
         ("api_coverage_pct", pa.float64()),
         ("instructions_missed", pa.int64()),    # whole library (JaCoCo report totals)

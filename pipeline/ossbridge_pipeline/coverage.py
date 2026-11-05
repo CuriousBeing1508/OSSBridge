@@ -412,6 +412,50 @@ def hint(status):
     return f"{HINTS.get(status, HINTS['error'])} {REPORT}"
 
 
+# Plain reasons shown to app users when there is no coverage.
+# Statuses not listed here are problems in our own setup.
+REASONS = {
+    "no_repository": "The library's POM on Maven Central does not link to a GitHub repository, "
+                     "so we could not get its source code to run its tests.",
+    "no_tag": "We found the library's source code on GitHub ({repository}), but no release tag for "
+              "version {version}, so we could not get the code of this exact version.",
+    "no_build": "The library is not built with Maven or Gradle, the only build tools we can run.",
+    "no_module": "We could not find the part of the GitHub repository ({repository}) that builds this library.",
+    "build_failed": "We could not build the library's source code and run its tests (tried Java {jdks}).",
+    "timeout": "The library's tests did not finish within our time limit of {minutes} minutes.",
+    "no_coverage": "The library's tests ran, but recorded no coverage. Its build may start the tests "
+                   "in a way we cannot measure.",
+}
+OUR_PROBLEM = f"A problem on our side stopped the measurement. Please report it at {ISSUES_URL}"
+NOT_RUN = "Test coverage was not measured in this analysis."
+
+
+def reason(summary, timeout=DEFAULT_TIMEOUT):
+    """Return a plain sentence that says why there is no coverage."""
+    status = summary.get("status")
+    if status == "ok":
+        return None
+    if status not in REASONS:
+        return OUR_PROBLEM
+    jdks = list(dict.fromkeys(summary.get("jdks_tried") or []))
+    return REASONS[status].format(repository=summary.get("repository") or "?", version=summary.get("version"),
+                                  jdks=", ".join(map(str, jdks)) or "?", minutes=round(timeout / 60))
+
+
+def error_details(summary):
+    """Return the raw error that stopped the coverage measurement."""
+    if summary.get("status") == "ok":
+        return None
+    lines = []
+    for a in summary.get("attempts") or []:
+        profiles = " without JDK profiles" if a.get("disabled_profiles") else ""
+        lines.append(f"JDK {a['jdk']}{profiles}: {a['reason']}")
+    # The build_failed detail only repeats the JDK list.
+    if summary.get("status") != "build_failed" and summary.get("detail"):
+        lines.append(summary["detail"])
+    return "\n".join(lines) or None
+
+
 # ---------------------------------------------------------------- JaCoCo
 
 def jacoco_tools(tools_dir=TOOLS_DIR, base_url=MAVEN_CENTRAL):
@@ -723,6 +767,8 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
     finally:
         if summary["status"] != "ok":
             summary["hint"] = hint(summary["status"])
+            summary["reason"] = reason(summary, timeout)
+            summary["error"] = error_details(summary)
         summary["seconds"] = round(time.time() - started)
         if not keep_source:
             shutil.rmtree(source_dir, ignore_errors=True)

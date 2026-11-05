@@ -17,8 +17,10 @@ its output are skipped, and step 7 stores what there is. Each step's status,
 duration and summary are written to run.json in the run folder (also while the
 run is going on), and progress is printed as the run goes.
 
-Step statuses: ok | failed | skipped. The exit code is 0 when step 7 stored the
-results, even if some steps failed (see run.json), and 1 otherwise.
+Step statuses: ok | failed | skipped | unavailable. A step is unavailable when
+the library itself does not allow a result, for example when it has no GitHub
+repository. Such a run still counts as ok. The exit code is 0 when step 7 stored
+the results, even if some steps failed (see run.json), and 1 otherwise.
 
 One step at a time (e.g. one GitHub Actions step each):
 
@@ -63,6 +65,10 @@ class StepFailed(Exception):
 
 class StepSkipped(Exception):
     """The step was not run on purpose (e.g. --skip-coverage)."""
+
+
+class StepUnavailable(Exception):
+    """The step ran but the library itself does not allow a result."""
 
 
 class RunLocked(Exception):
@@ -114,7 +120,7 @@ class Run:
 
     def finish(self):
         statuses = [s["status"] for s in self.record["steps"].values()]
-        self.record["status"] = ("ok" if all(s == "ok" for s in statuses)
+        self.record["status"] = ("ok" if all(s in ("ok", "unavailable") for s in statuses)
                                  else "partial" if self.record["steps"]["store"]["status"] == "ok" else "failed")
         self.record["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.save()
@@ -130,8 +136,13 @@ class Run:
         entry = self.record["steps"][name]
         missing = [n for n in needs if self.record["steps"][n]["status"] != "ok"]
         if missing:
-            entry.update(status="skipped", detail=f"needs {', '.join(missing)}")
-            self.progress(name, "skipped", entry["detail"])
+            # A step that needs an unavailable result is unavailable for the same reason.
+            unavailable = [n for n in missing if self.record["steps"][n]["status"] == "unavailable"]
+            if len(unavailable) == len(missing):
+                entry.update(status="unavailable", detail=self.record["steps"][unavailable[0]]["detail"])
+            else:
+                entry.update(status="skipped", detail=f"needs {', '.join(missing)}")
+            self.progress(name, entry["status"], entry["detail"])
             self.save()
             return None
         entry["status"] = "running"
@@ -143,6 +154,8 @@ class Run:
             entry.update(status="ok", summary=summary)
         except StepSkipped as e:
             entry.update(status="skipped", detail=str(e))
+        except StepUnavailable as e:
+            entry.update(status="unavailable", detail=str(e))
         except StepFailed as e:
             entry.update(status="failed", detail=str(e))
         except Exception as e:   # a step's bug or environment problem must not stop the other branch
@@ -229,7 +242,10 @@ def step_table(r, index, target, top_target, max_tried, fetch_missing, skip_cove
         summary = coverage.run(ws, timeout=timeout, only_jdk=jdk,
                                progress=lambda stage, detail: progress("coverage", "progress", f"{stage}: {detail}"))
         if summary["status"] != "ok":
-            r.record["steps"]["coverage"].update(attempts=summary["attempts"], hint=summary["hint"])
+            r.record["steps"]["coverage"].update(attempts=summary["attempts"], hint=summary["hint"],
+                                                 error=summary.get("error"))
+            if summary["status"] in coverage.REASONS:
+                raise StepUnavailable(summary.get("reason") or coverage.reason(summary, timeout))
             raise StepFailed(f"coverage {summary['status']}: {summary['detail']}")
         return {k: summary[k] for k in ("repository", "tag", "build_tool", "jdk", "tests", "seconds")}
 
@@ -274,8 +290,8 @@ def report(record):
         lines.append(f"| {title} | {entry['status']} | {entry.get('seconds', '')} | {result} |")
     coverage_entry = record["steps"]["coverage"]
     if coverage_entry.get("hint"):
-        lines += ["", "Test coverage could not be measured:", ""]
-        lines += [f"- JDK {a['jdk']}: {a['reason']}" for a in coverage_entry.get("attempts", [])]
+        lines += ["", "Test coverage could not be measured. The error was:", ""]
+        lines += ["```", coverage_entry.get("error") or coverage_entry.get("detail", ""), "```"]
         lines += ["", coverage_entry["hint"]]
     return "\n".join(lines) + "\n"
 
@@ -337,7 +353,8 @@ def main():
         if state["line"]:
             print()
             state["line"] = False
-        text = {"start": "...", "ok": "done", "failed": f"FAILED: {detail}", "skipped": f"skipped ({detail})"}[event]
+        text = {"start": "...", "ok": "done", "failed": f"FAILED: {detail}", "skipped": f"skipped ({detail})",
+                "unavailable": f"no result: {detail}"}[event]
         print(f"{stamp} {titles[step]}: {text}", flush=True)
 
     options = dict(index=args.index, target=args.target, top_target=args.top_target, max_tried=args.max_tried,

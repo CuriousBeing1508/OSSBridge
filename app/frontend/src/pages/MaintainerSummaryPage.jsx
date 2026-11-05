@@ -28,6 +28,29 @@ const COLORS = [
 // Pie chart slices with a value: a zero slice has no area but would still get a label
 const pieSlices = (slices) => slices.filter((slice) => slice.value > 0);
 
+// Shows why a version has no test coverage, with the raw error behind a toggle.
+const CoverageUnavailable = ({ coverage }) => (
+  <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+    <p className="text-sm font-semibold text-yellow-800">Test coverage is not available for this version.</p>
+    <p className="text-sm text-yellow-800 mt-1">{coverage.reason}</p>
+    <p className="text-sm text-yellow-800 mt-1">
+      The usage results do not depend on test coverage, so they are complete.
+    </p>
+    {coverage.error && (
+      <details className="mt-3">
+        <summary className="text-xs text-yellow-700 cursor-pointer">Details</summary>
+        <pre className="mt-2 text-xs bg-yellow-100 text-yellow-900 p-3 rounded overflow-x-auto whitespace-pre-wrap break-words">
+          {coverage.error}
+        </pre>
+      </details>
+    )}
+  </div>
+);
+
+// The coverage reason from a failed coverage request.
+const coverageFromError = (err, fallback) =>
+  err.response?.data?.coverage || { reason: err.response?.data?.error || fallback, error: null };
+
 const MaintainerSummaryPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -122,7 +145,7 @@ const MaintainerSummaryPage = () => {
         } catch (ctcErr) {
           console.log("Community test coverage data not available:", ctcErr.response?.data?.error);
           setCommunityTestCoverageData(null);
-          setCommunityTestCoverageError(ctcErr.response?.data?.error || "Failed to fetch community test coverage");
+          setCommunityTestCoverageError(coverageFromError(ctcErr, "Failed to fetch community test coverage."));
         }
 
         // Test Coverage
@@ -136,7 +159,7 @@ const MaintainerSummaryPage = () => {
         } catch (coverageErr) {
           console.log("Test coverage data not available:", coverageErr.response?.data?.error);
           setTestCoverageData(null);
-          setTestCoverageError(coverageErr.response?.data?.error || "Failed to fetch test coverage");
+          setTestCoverageError(coverageFromError(coverageErr, "Failed to fetch test coverage."));
         }
 
       } catch (err) {
@@ -268,6 +291,9 @@ const MaintainerSummaryPage = () => {
         {/* Overview Tab */}
         {data && activeTab === "overview" && (
           <div className="space-y-8">
+            {data.testCoverage && !data.testCoverage.available && (
+              <CoverageUnavailable coverage={data.testCoverage} />
+            )}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
                 <h2 className="text-sm font-semibold text-gray-600 mb-2">Total Dependents</h2>
@@ -526,12 +552,7 @@ const MaintainerSummaryPage = () => {
                   </p>
                 </div>
 
-                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
-                  <p className="text-sm text-yellow-700">{testCoverageError}</p>
-                  <p className="mt-2 text-xs text-yellow-600">
-                    Run: <code className="bg-yellow-100 px-1 rounded">cd AutomatedJarDownload && python scripts/run_pipeline.py</code>
-                  </p>
-                </div>
+                <CoverageUnavailable coverage={testCoverageError} />
               </div>
             ) : testCoverageData && (
               <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -745,9 +766,13 @@ const MaintainerSummaryPage = () => {
 
 
 
-        {/* CTC should be here */}
-
         {/* Community Test Coverage Tab */}
+        {!communityTestCoverageData && communityTestCoverageError && activeTab === "community-test-coverage" && (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-bold mb-4 text-gray-800">Community Test Coverage (CTC)</h2>
+            <CoverageUnavailable coverage={communityTestCoverageError} />
+          </div>
+        )}
         {communityTestCoverageData && activeTab === "community-test-coverage" && (
           <div className="space-y-8">
             <div className="bg-white rounded-lg shadow-md p-6">

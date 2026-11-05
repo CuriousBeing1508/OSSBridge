@@ -77,17 +77,34 @@ def test_no_dependents_skips_collection_but_runs_the_api_branch(steps, tmp_path)
     assert record["status"] == "partial"
 
 
-def test_failed_coverage_skips_api_coverage(steps, tmp_path):
-    steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
-                    "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
-                    "hint": "Locally: pass --jdk N. If the problem persists, please report the library"})
+BUILD_FAILED = {"status": "build_failed", "detail": "no tests ran", "tests": None, "jdks_tried": [8],
+                "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
+                "hint": "Locally: pass --jdk N. If the problem persists, please report the library",
+                "reason": "We could not build the library's source code and run its tests (tried Java 8).",
+                "error": "JDK 8: Source option 7 is no longer supported"}
+
+
+def test_coverage_the_library_does_not_allow_is_unavailable(steps, tmp_path):
+    steps(coverage=BUILD_FAILED)
+    record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
+    assert statuses(record)["coverage"] == "unavailable"
+    assert record["steps"]["coverage"]["detail"] == BUILD_FAILED["reason"]
+    assert record["steps"]["coverage"]["error"] == BUILD_FAILED["error"]
+    assert statuses(record)["api_coverage"] == "unavailable"
+    assert record["steps"]["api_coverage"]["detail"] == BUILD_FAILED["reason"]
+    assert statuses(record)["store"] == "ok"
+    assert record["status"] == "ok"
+    assert "--jdk" in record["steps"]["coverage"]["hint"]
+
+
+def test_coverage_stopped_by_our_setup_fails(steps, tmp_path):
+    steps(coverage={"status": "no_jdk", "detail": "no installed JDK (found [])", "tests": None,
+                    "attempts": [], "hint": "No JDK was found."})
     record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
     assert statuses(record)["coverage"] == "failed"
-    assert record["steps"]["coverage"]["detail"] == "coverage build_failed: no tests ran"
+    assert record["steps"]["coverage"]["detail"] == "coverage no_jdk: no installed JDK (found [])"
     assert statuses(record)["api_coverage"] == "skipped"
-    assert statuses(record)["store"] == "ok"
-    assert record["steps"]["coverage"]["attempts"][0]["jdk"] == 8
-    assert "--jdk" in record["steps"]["coverage"]["hint"]
+    assert record["status"] == "partial"
 
 
 def test_skip_coverage_option(steps, tmp_path):
@@ -131,15 +148,13 @@ def test_lock_is_released_after_a_run_even_if_it_fails(steps, tmp_path):
 
 
 def test_steps_one_at_a_time_record_into_one_run(steps, tmp_path):
-    calls = steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
-                            "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
-                            "hint": "Locally: pass --jdk N."})
+    calls = steps(coverage=BUILD_FAILED)
     for name, _ in run.STEPS:
         record = run.run_step(GA, V, name, root=tmp_path, results_dir=tmp_path / "results")
     assert calls == ["candidates", "collect", "public_api", "coverage", "store_results"]   # api_coverage skipped
-    assert statuses(record) == {"dependents": "ok", "collect": "ok", "api": "ok", "coverage": "failed",
-                                "api_coverage": "skipped", "store": "ok"}
-    assert record["status"] == "partial" and "finished_at" in record
+    assert statuses(record) == {"dependents": "ok", "collect": "ok", "api": "ok", "coverage": "unavailable",
+                                "api_coverage": "unavailable", "store": "ok"}
+    assert record["status"] == "ok" and "finished_at" in record
     assert not (tmp_path / "org.example__lib@1.0" / "run.lock").exists()
 
 
@@ -150,13 +165,12 @@ def test_a_later_step_needs_an_existing_run(steps, tmp_path):
 
 
 def test_report_is_plain_markdown(steps, tmp_path):
-    steps(coverage={"status": "build_failed", "detail": "no tests ran", "tests": None,
-                    "attempts": [{"jdk": 8, "reason": "Source option 7 is no longer supported"}],
-                    "hint": "Locally: pass --jdk N."})
+    steps(coverage=BUILD_FAILED)
     record = run.run_pipeline(GA, V, root=tmp_path, results_dir=tmp_path / "results")
     text = run.report(record)
-    assert text.startswith("## OSSBridge analysis: org.example:lib:1.0\n\nStatus: **partial**")
+    assert text.startswith("## OSSBridge analysis: org.example:lib:1.0\n\nStatus: **ok**")
     assert "| 1 Dependents | ok |" in text and "| 4 dependent projects |" in text
-    assert "| 6 API coverage | skipped |" in text
-    assert "- JDK 8: Source option 7 is no longer supported" in text
+    assert "| 5 Test coverage | unavailable |" in text and BUILD_FAILED["reason"] in text
+    assert "| 6 API coverage | unavailable |" in text
+    assert "JDK 8: Source option 7 is no longer supported" in text
     assert text.isascii()                                     # no symbols

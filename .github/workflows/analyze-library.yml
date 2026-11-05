@@ -1,13 +1,10 @@
 # Analyzes one library version with the pipeline image and publishes the results to the
 # Hugging Face dataset. Start it from Actions > Analyze library > Run workflow.
 #
-# Each pipeline step is a workflow step (python -m ossbridge_pipeline.run --step ...), all
-# recorded in one run.json. A failed step is shown as failed but does not stop the others;
-# steps that need its output are skipped, and the results that exist are stored and published.
-# The run summary shows a table of the steps; run.json, the summaries and the build logs are
-# attached as an artifact.
-#
-# Needs the repository secret HF_TOKEN (write access to the dataset) to publish.
+# Here, each pipeline step is a workflow step (python -m ossbridge_pipeline.run --step ...), all
+# recorded in one run.json. A failed step is shown as failed but does not stop the other steps.
+# When the library itself does not allow test coverage, the coverage step is not shown as failed.
+# This script needs the repository secret HF_TOKEN (write access to the dataset) to publish.
 name: Analyze library
 run-name: Analyze ${{ inputs.release }}${{ inputs.request_id != '' && format(' [{0}]', inputs.request_id) || '' }}
 
