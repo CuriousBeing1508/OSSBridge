@@ -52,17 +52,6 @@ const Header = ({ currentPage = "home" }) => {
                 >
                   Maintainer Summary
                 </button>
-                <button
-                  onClick={() => handleNavigation("/analysisV2")}
-                  className={`px-4 py-2 rounded-lg font-medium transition ${
-                    currentPage === "user"
-                      ? "bg-green-100 text-green-700"
-                      : "text-gray-600 hover:bg-gray-100"
-                  }`}
-                  disabled={!library || !version}
-                >
-                  User Summary
-                </button>
               </>
             )}
             <button

@@ -88,10 +88,13 @@ router.get("/library", async (req, res) => {
     }
 
     const rows = await results.query(`
-      SELECT coalesce(i.library_version, a.version) AS version, i.dependents,
-             a.version IS NOT NULL AS analyzed, i.library_version IS NOT NULL AS "inIndex"
+      SELECT coalesce(i.library_version, a.version) AS version,
+             coalesce(i.dependents, a.dependent_projects) AS dependents,
+             a.version IS NOT NULL AS analyzed, i.library_version IS NOT NULL AS "inIndex",
+             a.dependents_selected AS "analyzedProjects"
       FROM (SELECT * FROM index_versions WHERE library_ga = $ga) i
-      FULL JOIN (SELECT version FROM library_versions WHERE library_ga = $ga) a
+      FULL JOIN (SELECT version, dependent_projects, dependents_selected FROM library_versions
+                 WHERE library_ga = $ga) a
         ON a.version = i.library_version`, { ga: match.library });
 
     const releases = await mavenReleases(match.library);

@@ -64,7 +64,7 @@ function apiGroups({ ga, version }) {
 function noCoverage(lv, res) {
   const coverage = results.coverage(lv.summary);
   if (coverage.available) return false;
-  res.status(404).json({ error: coverage.reason, coverage });
+  res.status(404).json({ error: coverage.reason || "Test coverage is not available for this version.", coverage });
   return true;
 }
 
@@ -167,12 +167,26 @@ router.get("/maintainer-summary", handle("maintainer-summary", async (req, res) 
   const categories = await results.query(`
     SELECT category, sum(caller_classes) AS n FROM uses
     WHERE library_ga = $ga AND version = $version GROUP BY category ORDER BY n DESC`, params);
-  const topMethods = await results.query(`
-    SELECT method_full AS "methodFull", count(DISTINCT dependent) AS "dependentCount",
-           sum(caller_classes) AS "totalUsageCount"
-    FROM uses WHERE library_ga = $ga AND version = $version AND method_full IS NOT NULL
-    GROUP BY method_full ORDER BY "dependentCount" DESC, "totalUsageCount" DESC, method_full
-    LIMIT 15`, params);
+  const ranked = (column) => results.query(`
+    SELECT ${column} AS name, count(DISTINCT dependent) AS projects
+    FROM uses WHERE library_ga = $ga AND version = $version AND ${column} <> ''
+    GROUP BY ${column} ORDER BY projects DESC, name LIMIT 10`, params);
+  // The 10 methods used by the most projects, with how much of them the tests run.
+  const coverage = results.coverage(lv.summary);
+  const topMethods = (await results.query(`
+    WITH used AS (
+      SELECT u.method_full, u.dependent, m.status, m.instruction_missed
+      FROM uses u JOIN api_methods m USING (library_ga, version, api_id)
+      WHERE u.library_ga = $ga AND u.version = $version)
+    SELECT method_full AS name, count(DISTINCT dependent) AS projects,
+           CASE WHEN NOT bool_or(status IN ('covered', 'covered_by_override', 'not_covered')) THEN 'no_code'
+                WHEN bool_and(status NOT IN ('covered', 'covered_by_override', 'not_covered')
+                              OR (status IN ('covered', 'covered_by_override') AND instruction_missed = 0))
+                  THEN 'fully_covered'
+                WHEN bool_or(status IN ('covered', 'covered_by_override')) THEN 'partly_covered'
+                ELSE 'not_covered' END AS coverage
+    FROM used GROUP BY method_full ORDER BY projects DESC, name LIMIT 10`, params))
+    .map((m) => (coverage.available ? m : { ...m, coverage: null }));
 
   res.json({
     library: req.query.library,
@@ -182,8 +196,10 @@ router.get("/maintainer-summary", handle("maintainer-summary", async (req, res) 
     uniqueClasses: totals.classes,
     uniqueMethods: totals.methods,
     categoryDistribution: Object.fromEntries(categories.map((c) => [c.category, c.n])),
+    topPackages: await ranked("package"),
+    topClasses: await ranked("class"),
     topMethods,
-    testCoverage: results.coverage(lv.summary),
+    testCoverage: coverage,
   });
 }));
 
@@ -272,6 +288,7 @@ router.get("/api-surface-usage", handle("api-surface-usage", async (req, res) =>
   const usagePercentage = pct(used.length, groups.length);
   const describe = (g) => ({
     signature: g.signature, package: g.package, class: g.class, method: g.method, overloadCount: g.overloads,
+    projects: g.dependents,
   });
   const message = `${usagePercentage}% of your library's available APIs are being used by ${dependents} dependents`;
 
@@ -315,7 +332,9 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
     WHERE library_ga = $ga AND version = $version`, { ga: lv.ga, version: lv.version });
 
   const totalUsedApis = used.length;
-  const usageBasedCoverage = pct(covered.length, totalUsedApis);
+  // APIs with no code to run, such as annotations, are neither tested nor untested.
+  const usedApisWithCode = covered.length + notCovered.length;
+  const usageBasedCoverage = pct(covered.length, usedApisWithCode);
   const usageBasedCoverageGain = round2(100 - usageBasedCoverage);
   const uncoveredInstructions = notCovered.reduce((sum, g) => sum + g.instruction_missed, 0);
   const known = project.pct !== null;
@@ -326,16 +345,17 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
   const interpretation = !known
     ? "Overall project coverage is not recorded for this version."
     : Math.abs(diff) < 1
-      ? "Used APIs have similar coverage to overall project - well balanced!"
+      ? "Used APIs have similar coverage to the overall project. They are well balanced."
       : diff < 0
-        ? "Used APIs have lower coverage than overall project - could prioritize testing these!"
-        : "Used APIs have better coverage than overall project - great job!";
+        ? "Used APIs have lower coverage than the overall project. You could prioritize testing them."
+        : "Used APIs have better coverage than the overall project. Great job!";
 
   res.json({
     library: req.query.library,
     version: lv.version,
 
     totalUsedApis,
+    usedApisWithCode,
     coveredByTests: covered.length,
     notCoveredByTests: notCovered.length,
     notFoundInCoverage: notFound.length,
@@ -345,7 +365,7 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
 
     summary: {
       totalDependents: dependents,
-      mainMessage: `${usageBasedCoverage}% of APIs used by dependents have test coverage`,
+      mainMessage: `Tests run ${covered.length.toLocaleString("en-US")} of the ${usedApisWithCode.toLocaleString("en-US")} used APIs that have code (${Math.round(usageBasedCoverage)}%).`,
       comparisonMessage: known
         ? `Overall project test coverage is ${project.pct}%`
         : "Overall project test coverage is not recorded for this version",
@@ -388,147 +408,72 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
 /**
  * ROUTE: /api/analysisV2/community-test-coverage
  * http://localhost:5050/api/analysisV2/community-test-coverage?library=jackson-databind&version=2.17.2
- * Community Test Coverage (CTC): share of dependents whose used APIs are all
- * covered by the library's tests
+ * Community Test Coverage (CTC) is the share of dependents whose used API methods are all
+ * fully covered by the library's tests. A method is fully covered when the tests run every
+ * line of it. Dependents that use no method with code are left out.
  */
 router.get("/community-test-coverage", handle("community-test-coverage", async (req, res) => {
   const lv = await results.libraryVersion(req, res);
   if (!lv || noCoverage(lv, res)) return;
   const params = { ga: lv.ga, version: lv.version };
 
-  // Status of each API a dependent uses, from the overloads it uses
+  // One row per dependent and used method that has code.
   const rows = await results.query(`
-    WITH missed AS (
-      SELECT signature, sum(instruction_missed) AS instruction_missed FROM api_methods
-      WHERE library_ga = $ga AND version = $version GROUP BY signature)
-    SELECT u.dependent, m.signature, any_value(m.package) AS package, any_value(m.class_name) AS class,
-           any_value(m.member) AS method, any_value(x.instruction_missed) AS instruction_missed,
-           CASE WHEN bool_or(m.status IN ('covered', 'covered_by_override')) THEN 'covered'
-                WHEN bool_or(m.status = 'not_covered') THEN 'not_covered'
-                ELSE 'not_found' END AS status
+    SELECT u.dependent, m.signature, any_value(m.class_name) AS class, any_value(m.member) AS method,
+           bool_and(m.status IN ('covered', 'covered_by_override') AND m.instruction_missed = 0)
+             AS fully_covered,
+           bool_or(m.status IN ('covered', 'covered_by_override')) AS any_covered
     FROM uses u
     JOIN api_methods m USING (library_ga, version, api_id)
-    JOIN missed x USING (signature)
     WHERE u.library_ga = $ga AND u.version = $version
+      AND m.status IN ('covered', 'covered_by_override', 'not_covered')
     GROUP BY u.dependent, m.signature`, params);
-  const all = await results.query(`
-    SELECT DISTINCT dependent FROM uses WHERE library_ga = $ga AND version = $version
-    ORDER BY dependent`, params);
 
-  const byDependent = new Map(all.map((d) => [d.dependent, []]));
-  for (const r of rows) byDependent.get(r.dependent).push(r);
+  const fullyCovered = new Map();
+  const perProject = new Map();
+  const methods = new Map();
+  for (const r of rows) {
+    fullyCovered.set(r.dependent, (fullyCovered.get(r.dependent) ?? true) && r.fully_covered);
+    const p = perProject.get(r.dependent) || { methods: 0, fully: 0, covered: 0 };
+    p.methods += 1;
+    p.fully += r.fully_covered ? 1 : 0;
+    p.covered += r.any_covered ? 1 : 0;
+    perProject.set(r.dependent, p);
+    const m = methods.get(r.signature) || { signature: r.signature, dependents: 0, fully: true, anyCovered: false };
+    m.dependents += 1;
+    m.fully = m.fully && r.fully_covered;
+    m.anyCovered = m.anyCovered || r.any_covered;
+    methods.set(r.signature, m);
+  }
 
-  const projects = [...byDependent.entries()].map(([name, apis]) => {
-    const coveredApis = apis.filter((a) => a.status === "covered").length;
-    const uncovered = apis.filter((a) => a.status === "not_covered");
-    const notFoundApis = apis.filter((a) => a.status === "not_found").length;
-    return {
-      name,
-      totalApisUsed: apis.length,
-      coveredApis,
-      uncoveredApis: uncovered.length,
-      notFoundApis,
-      coveragePercentage: pct(coveredApis, apis.length),
-      isFullyCovered: uncovered.length === 0 && notFoundApis === 0 && apis.length > 0,
-      topUncoveredApis: uncovered
-        .sort((a, b) => b.instruction_missed - a.instruction_missed)
-        .slice(0, 5)
-        .map((a) => ({
-          signature: a.signature, package: a.package, class: a.class, method: a.method,
-          instructionsMissed: a.instruction_missed,
-        })),
-    };
-  });
-
-  const NPtotal = projects.length;
-  const fully = projects.filter((p) => p.isFullyCovered);
-  const partially = projects.filter((p) => !p.isFullyCovered && p.coveredApis > 0);
-  const none = projects.filter((p) => p.coveredApis === 0 && p.totalApisUsed > 0);
-  const NPFullyCovered = fully.length;
-  const ctc = pct(NPFullyCovered, NPtotal);
-  const average = NPtotal ? round2(projects.reduce((sum, p) => sum + p.coveragePercentage, 0) / NPtotal) : 0;
-  const share = (n) => (NPtotal > 0 ? ((n / NPtotal) * 100).toFixed(2) : 0);
-  const inRange = (lo, hi) => projects.filter((p) => p.coveragePercentage >= lo && p.coveragePercentage < hi).length;
-
-  const interpretation =
-    ctc >= 80 ? "Excellent! Most dependent projects use only well-tested APIs."
-      : ctc >= 60 ? "Good coverage, but some dependents rely on untested APIs."
-        : ctc >= 40 ? "Moderate coverage. Many dependents use APIs without complete test coverage."
-          : ctc >= 20 ? "Low coverage. Most dependents use some untested APIs."
-            : "Critical! Very few dependents use well tested API methods of your library.";
-
+  const NPtotal = fullyCovered.size;
+  const NPFullyCovered = [...fullyCovered.values()].filter(Boolean).length;
+  const all = [...methods.values()];
+  // Projects whose used methods are all fully covered, partly covered, or not run at all.
+  const projects = [...perProject.values()];
+  const partiallyCovered = projects.filter((p) => p.fully < p.methods && p.covered > 0).length;
+  const notCoveredProjects = projects.filter((p) => p.covered === 0).length;
+  const averageProjectCoverage = projects.length
+    ? round2(projects.reduce((sum, p) => sum + (100 * p.fully) / p.methods, 0) / projects.length) : 0;
+  const notCovered = all.filter((m) => !m.anyCovered);
   res.json({
     library: req.query.library,
     version: lv.version,
-
-    communityTestCoverage: ctc,
+    communityTestCoverage: pct(NPFullyCovered, NPtotal),
     NPFullyCovered,
     NPtotal,
-
-    summary: {
-      interpretation,
-      mainMessage: `${ctc}% of dependent projects use only APIs that are fully covered by tests`,
-      fullyCoveredCount: NPFullyCovered,
-      partiallyCoveredCount: partially.length,
-      notCoveredCount: none.length,
-      averageProjectCoverage: average,
-    },
-
-    breakdown: {
-      fullyCovered: {
-        count: NPFullyCovered,
-        percentage: ctc,
-        description: "Dependents where ALL used API methods have test coverage",
-      },
-      partiallyCovered: {
-        count: partially.length,
-        percentage: share(partially.length),
-        description: "Dependents where SOME API methods lacking test coverage",
-      },
-      notCovered: {
-        count: none.length,
-        percentage: share(none.length),
-        description: "Dependents where NONE of the used API methods have test coverage",
-      },
-    },
-
-    topPerformers: [...fully]
-      .sort((a, b) => b.totalApisUsed - a.totalApisUsed)
+    partiallyCoveredProjects: partiallyCovered,
+    notCoveredProjects,
+    averageProjectCoverage,
+    // Used methods that have code, by how much of them the tests run.
+    methodsWithCode: all.length,
+    methodsFullyCovered: all.filter((m) => m.fully).length,
+    methodsPartlyCovered: all.filter((m) => !m.fully && m.anyCovered).length,
+    methodsNotCovered: notCovered.length,
+    notCoveredMethods: notCovered
+      .sort((a, b) => b.dependents - a.dependents || a.signature.localeCompare(b.signature))
       .slice(0, 10)
-      .map((p) => ({ name: p.name, totalApisUsed: p.totalApisUsed, coveragePercentage: p.coveragePercentage })),
-
-    projectsNeedingAttention: projects
-      .filter((p) => p.uncoveredApis > 0)
-      .sort((a, b) => b.uncoveredApis - a.uncoveredApis)
-      .slice(0, 10)
-      .map((p) => ({
-        name: p.name,
-        totalApisUsed: p.totalApisUsed,
-        coveredApis: p.coveredApis,
-        uncoveredApis: p.uncoveredApis,
-        coveragePercentage: p.coveragePercentage,
-        topUncoveredApis: p.topUncoveredApis,
-      })),
-
-    distribution: {
-      "100% coverage": fully.length,
-      "80-99% coverage": inRange(80, 100),
-      "60-79% coverage": inRange(60, 80),
-      "40-59% coverage": inRange(40, 60),
-      "20-39% coverage": inRange(20, 40),
-      "0-19% coverage": inRange(0, 20),
-    },
-
-    allProjects: [...projects]
-      .sort((a, b) => b.coveragePercentage - a.coveragePercentage)
-      .map((p) => ({
-        name: p.name,
-        totalApisUsed: p.totalApisUsed,
-        coveredApis: p.coveredApis,
-        uncoveredApis: p.uncoveredApis,
-        coveragePercentage: p.coveragePercentage,
-        isFullyCovered: p.isFullyCovered,
-      })),
+      .map((m) => ({ signature: m.signature, dependents: m.dependents })),
   });
 }));
 

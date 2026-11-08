@@ -18,21 +18,18 @@ import Header from "../components/Header";
 import { useLibrary } from "../context/LibraryContext";
 
 import MethodSearchButton from "../components/MethodSearchButton";
+import InfoIcon, { DEPENDENTS_INFO } from "../components/InfoIcon";
 import API_BASE_URL from '../services/api';
 import { pageParam, pageUrl } from "../utils/pageUrl";
-const COLORS = [
-  "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
-  "#EC4899", "#14B8A6", "#F97316", "#22C55E", "#6366F1"
-];
 
-// Pie chart slices with a value: a zero slice has no area but would still get a label
+// Pie chart slices with a value. A zero slice has no area but would still get a label.
 const pieSlices = (slices) => slices.filter((slice) => slice.value > 0);
 
 // Shows why a version has no test coverage, with the raw error behind a toggle.
 const CoverageUnavailable = ({ coverage }) => (
   <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
     <p className="text-sm font-semibold text-yellow-800">Test coverage is not available for this version.</p>
-    <p className="text-sm text-yellow-800 mt-1">{coverage.reason}</p>
+    {coverage.reason && <p className="text-sm text-yellow-800 mt-1">{coverage.reason}</p>}
     <p className="text-sm text-yellow-800 mt-1">
       The usage results do not depend on test coverage, so they are complete.
     </p>
@@ -47,9 +44,110 @@ const CoverageUnavailable = ({ coverage }) => (
   </div>
 );
 
+// Every tab starts with its title, its definition and the projects it is based on.
+const MetricTab = ({ title, question, definition, basis, headline, children }) => (
+  <div className="space-y-8">
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold text-gray-800">{title}</h2>
+      <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg">
+        <p className="text-sm text-purple-800">
+          <strong>{question}</strong> {definition}
+        </p>
+      </div>
+      {basis && <p className="text-base text-gray-700">{basis}</p>}
+    </div>
+    {headline}
+    {children}
+  </div>
+);
+
+// The main number of a tab with one sentence below it.
+const Headline = ({ value, sentence, children }) => (
+  <div className="bg-white rounded-lg shadow p-6">
+    <div className="text-5xl font-bold text-purple-700">{value}</div>
+    <div className="text-base text-gray-800 mt-3">{sentence}</div>
+    {children && <div className="mt-5 max-w-2xl">{children}</div>}
+  </div>
+);
+
+// A short bar that splits a total into groups, with a legend.
+const Breakdown = ({ title, groups }) => {
+  const total = groups.reduce((sum, g) => sum + g.count, 0);
+  if (total === 0) return null;
+  return (
+    <div>
+      {title && <p className="text-sm font-semibold text-gray-700 mb-2">{title}</p>}
+      <div className="flex w-full h-3 rounded-full overflow-hidden bg-gray-200">
+        {groups.filter((g) => g.count > 0).map((g) => (
+          <div key={g.label} className={g.bar} style={{ width: `${(g.count / total) * 100}%` }}
+               title={`${g.count.toLocaleString()} ${g.label}`} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-sm">
+        {groups.map((g) => (
+          <span key={g.label} className={g.text}>
+            <span className={`inline-block w-3 h-3 rounded-sm mr-1 align-middle ${g.bar}`} />
+            <strong>{g.count.toLocaleString()}</strong> {g.label}
+            {g.info && <> <InfoIcon text={g.info} /></>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const COVERED_INFO = "A method also counts as covered when the tests run a method of the library that overrides "
+  + "or implements it. For example, an interface method is covered when the tests run one of its implementations.";
+const NOT_MEASURABLE_INFO = "Some APIs have no code that a test could run. These are annotation members, enum "
+  + "methods that the compiler generates, and interface methods with no implementation in the library. Other APIs "
+  + "are in bundled third-party classes that the coverage report leaves out. These APIs are counted on their own "
+  + "and left out of the percentage.";
+const FULLY_COVERED_INFO = "Fully covered means the tests run every line of the method.";
+const API_INFO = "APIs are the public and protected methods and constructors that a dependent can use. Protected "
+  + "ones count only in classes that are not final. Overloaded methods with the same name count as one API.";
+const INTENSITY_API_INFO = "Here an API is any class, method or field of the library that the project uses.";
+
+const COVERAGE_LABELS = {
+  fully_covered: { text: "Fully covered", className: "text-green-700" },
+  partly_covered: { text: "Partly covered", className: "text-yellow-700" },
+  not_covered: { text: "Not covered", className: "text-red-700" },
+  no_code: { text: "No code to test", className: "text-gray-500" },
+};
+
+// A top 10 table with fully qualified names and a count for each row.
+const TopTable = ({ title, note, column, countColumn = "Projects using it", rows, extra }) => {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <h3 className="text-lg font-semibold mb-1 text-gray-700">{title}</h3>
+      {note && <p className="text-sm text-gray-600 mb-3">{note}</p>}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-2 text-left font-semibold text-gray-600">{column}</th>
+              <th className="px-4 py-2 text-right font-semibold text-gray-600">{countColumn}</th>
+              {extra && <th className="px-4 py-2 text-left font-semibold text-gray-600">{extra.column}</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {rows.slice(0, 10).map((r) => (
+              <tr key={r.name}>
+                <td className="px-4 py-2 font-mono text-xs text-gray-800 break-all">{r.name}</td>
+                <td className="px-4 py-2 text-right font-semibold text-gray-800">{r.count.toLocaleString()}</td>
+                {extra && <td className="px-4 py-2">{extra.cell(r)}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 // The coverage reason from a failed coverage request.
 const coverageFromError = (err, fallback) =>
-  err.response?.data?.coverage || { reason: err.response?.data?.error || fallback, error: null };
+  err.response?.data?.coverage || { reason: fallback, error: null };
 
 const MaintainerSummaryPage = () => {
   const location = useLocation();
@@ -71,12 +169,11 @@ const MaintainerSummaryPage = () => {
 
   const [data, setData] = useState(null);
   const [intensityData, setIntensityData] = useState(null);
-  const [packageData, setPackageData] = useState(null);
+  const [allDependents, setAllDependents] = useState([]);
   const [apiSurfaceData, setApiSurfaceData] = useState(null);
   const [needsExtraction, setNeedsExtraction] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("api-surface");
 
 
   const [testCoverageData, setTestCoverageData] = useState(null);
@@ -90,7 +187,6 @@ const MaintainerSummaryPage = () => {
     if (!library || !version) return;
 
     const fetchAllData = async () => {
-      setLoading(true);
       setError("");
       try {
         const cleanLibrary = library.includes(":")
@@ -111,12 +207,12 @@ const MaintainerSummaryPage = () => {
         );
         setIntensityData(intensityRes.data);
 
-        // Package
-        const packageRes = await axios.get(
-          `${API_BASE_URL}/api/analysisV2/package-heatmap`,
-          { params: { library: cleanLibrary, version } }
+        // Every analyzed dependent with the number of APIs it uses
+        const usageRes = await axios.get(
+          `${API_BASE_URL}/api/analysisV2/usage`,
+          { params: { library: cleanLibrary, version, top: 100000 } }
         );
-        setPackageData(packageRes.data);
+        setAllDependents(usageRes.data.topDependents);
 
         // API Surface
         try {
@@ -167,8 +263,6 @@ const MaintainerSummaryPage = () => {
         setError(err.response?.status === 404
           ? `${library} ${version} has not been analyzed yet. Go back to the version list to see the analyzed versions.`
           : "Failed to fetch summary data.");
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -216,12 +310,6 @@ const MaintainerSummaryPage = () => {
           <MethodSearchButton library={library} version={version} />
         </div>
 
-        {/* {loading && (
-          <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
-            <p className="text-gray-600 mt-4">Loading data...</p>
-          </div>
-        )} */}
 
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
@@ -229,830 +317,587 @@ const MaintainerSummaryPage = () => {
           </div>
         )}
 
-        {data && (
-          <div className="mb-6">
-            <div className="border-b border-gray-200">
-              <nav className="-mb-px flex space-x-8">
+        {data && (() => {
+          const basis = (
+            <>These results come from {data.totalDependents.toLocaleString()} dependent projects that
+              call {library} {version}. <InfoIcon text={DEPENDENTS_INFO} /></>
+          );
+          const tabs = [
+            ["api-surface", "API Surface Usage"],
+            ["community-test-coverage", "Community Test Coverage"],
+            ["intensity", "Usage Intensity"],
+            ["overview", "What dependents use"],
+          ];
+          const coverageUnavailable = data.testCoverage && !data.testCoverage.available;
+          return (
+          <>
+          <div className="mb-6 border-b border-gray-200">
+            <nav className="-mb-px flex flex-wrap gap-x-8">
+              {tabs.map(([id, label]) => (
                 <button
-                  onClick={() => setActiveTab("overview")}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "overview"
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === id
                     ? "border-green-600 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }`}
+                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"}`}
                 >
-                  Overview
+                  {label}
                 </button>
-
-                <button
-                  onClick={() => setActiveTab("api-surface")}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "api-surface"
-                    ? "border-green-600 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }`}
-                >
-                  API Surface Usage
-                </button>
-
-                <button
-                  onClick={() => setActiveTab("community-test-coverage")}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "community-test-coverage"
-                    ? "border-green-600 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }`}
-                >
-                  Community Test Coverage
-                </button>
-
-
-                <button
-                  onClick={() => setActiveTab("intensity")}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "intensity"
-                    ? "border-green-600 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }`}
-                >
-                  Usage Intensity
-                </button>
-                <button
-                  onClick={() => setActiveTab("packages")}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === "packages"
-                    ? "border-green-600 text-green-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                    }`}
-                >
-                  Packages & Classes
-                </button>
-
-              </nav>
-            </div>
+              ))}
+            </nav>
           </div>
-        )}
 
-        {/* Overview Tab */}
-        {data && activeTab === "overview" && (
-          <div className="space-y-8">
-            {data.testCoverage && !data.testCoverage.available && (
-              <CoverageUnavailable coverage={data.testCoverage} />
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Total Dependents</h2>
-                <p className="text-3xl font-bold text-blue-600">{data.totalDependents}</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Unique Packages</h2>
-                <p className="text-3xl font-bold text-green-600">{data.uniquePackages}</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-orange-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Unique Classes</h2>
-                <p className="text-3xl font-bold text-orange-600">{data.uniqueClasses}</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-purple-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Unique Method Calls</h2>
-                <p className="text-3xl font-bold text-purple-600">{data.uniqueMethods}</p>
-              </div>
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              {coverageUnavailable && <CoverageUnavailable coverage={data.testCoverage} />}
+              <MetricTab
+                title="What dependents use"
+                question="What does this show?"
+                definition="Shows which packages, classes and methods of the library dependent projects use, and how many projects use each."
+                basis={basis}
+                headline={(
+                  <Headline
+                    value={`${data.totalDependents.toLocaleString()} projects`}
+                    sentence={<>{data.totalDependents.toLocaleString()} projects call {library} {version}. Together
+                      they use {data.uniquePackages.toLocaleString()} packages, {data.uniqueClasses.toLocaleString()} classes
+                      and {data.uniqueMethods.toLocaleString()} methods of the library.</>}
+                  />
+                )}
+              >
+                {[["Most used packages", "Package", data.topPackages], ["Most used classes", "Class", data.topClasses]]
+                  .map(([title, column, rows]) => rows && rows.length > 0 && (
+                    <TopTable
+                      key={title}
+                      title={title}
+                      column={column}
+                      note={<><span className="font-mono">{rows[0].name}</span> is used by {rows[0].projects.toLocaleString()} of {data.totalDependents.toLocaleString()} projects.</>}
+                      rows={rows.map((r) => ({ name: r.name, count: r.projects }))}
+                    />
+                  ))}
+                <TopTable
+                  title="Most used methods"
+                  column="Method"
+                  rows={data.topMethods.map((r) => ({ name: r.name, count: r.projects, coverage: r.coverage }))}
+                  extra={data.testCoverage?.available ? {
+                    column: "Tests",
+                    cell: (r) => (
+                      <span className={COVERAGE_LABELS[r.coverage]?.className || ""}>
+                        {COVERAGE_LABELS[r.coverage]?.text || ""}
+                      </span>
+                    ),
+                  } : null}
+                />
+
+                {allDependents.length > 0 && (
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <h3 className="text-lg font-semibold mb-1 text-gray-700">All dependents</h3>
+                    <p className="text-sm text-gray-600 mb-3">Click a project to see which parts of the library it uses.</p>
+                    <div className="max-h-96 overflow-y-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2 text-left font-semibold text-gray-600">Dependent</th>
+                            <th className="px-4 py-2 text-right font-semibold text-gray-600">APIs used</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {allDependents.map((d) => (
+                            <tr
+                              key={d.dependent}
+                              onClick={() => navigate(pageUrl("/analysisV2/dependent", { library, version, dependent: d.dependent }), {
+                                state: { library, version, dependent: d.dependent },
+                              })}
+                              className="cursor-pointer hover:bg-blue-50"
+                            >
+                              <td className="px-4 py-2 font-mono text-xs text-blue-700 break-all">{d.dependent}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-gray-800">{d.apisUsed.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </MetricTab>
             </div>
+          )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-white p-6 rounded-lg shadow">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Usage by Category</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={pieSlices(Object.entries(data.categoryDistribution).map(([name, value], i) => (
-                        { name, value, color: COLORS[i % COLORS.length] })))}
-                      dataKey="value"
-                      nameKey="name"
-                      outerRadius={100}
-                      label
-                    >
-                      {pieSlices(Object.entries(data.categoryDistribution).map(([name, value], i) => (
-                        { name, value, color: COLORS[i % COLORS.length] }))).map((slice) => (
-                        <Cell key={slice.name} fill={slice.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="bg-white p-6 rounded-lg shadow">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Top Methods by Dependent Count</h3>
-                <ResponsiveContainer width="100%" height={350}>
-                  <BarChart data={data.topMethods}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="methodFull" hide />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="dependentCount" fill="#10B981" name="Dependents" />
-                    <Bar dataKey="totalUsageCount" fill="#3B82F6" name="Total Usage" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Top 15 Most Used Methods</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">#</th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">Method</th>
-                        <th className="px-4 py-3 text-right font-semibold text-gray-600">Dependents</th>
-                        <th className="px-4 py-3 text-right font-semibold text-gray-600">Total Usage</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {data.topMethods.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-600">{idx + 1}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-blue-600">{item.methodFull}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-green-600">{item.dependentCount}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-blue-600">{item.totalUsageCount}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          {activeTab === "api-surface" && (
+            <MetricTab
+              title="API Surface Usage"
+              question="What is API Surface Usage?"
+              definition={<>This shows <strong>what percentage of your library's available public API methods are actually being used by your dependents</strong>. It helps you understand which public methods are popular and which ones might be candidates for deprecation or removal.</>}
+              basis={basis}
+            >
+              {needsExtraction && (
+                <div className="bg-yellow-50 border border-yellow-200 p-6 rounded-lg">
+                  <h3 className="text-lg font-semibold text-yellow-900 mb-4">
+                    Available public API methods Not Yet Extracted
+                  </h3>
+                  <p className="text-yellow-800 mb-4">
+                    The available public API methods for this library version have not been extracted yet.
+                  </p>
+                  <div className="bg-yellow-100 p-4 rounded font-mono text-sm text-yellow-900">
+                    <p className="font-semibold mb-2">If you want this analytics</p>
+                    <code className="block">Please reach out to us through our contact page</code>
+                  </div>
+                  <p className="text-yellow-700 mt-4 text-sm">
+                    Extraction can take several minutes for large libraries. Once complete, we will notify you.
+                  </p>
                 </div>
-              </div>
-            </div>
-          </div>
-        )}
+              )}
 
-
-        {/* API Surface Usage Tab */}
-        {activeTab === "api-surface" && (
-          <div className="space-y-8">
-            {/* Explanation Banner */}
-            <div className="bg-blue-50 border border-blue-200 p-6 rounded-lg">
-              <h3 className="text-lg font-semibold text-blue-900 mb-2">
-                What is API Surface Usage?
-              </h3>
-              <p className="text-blue-800">
-                This shows <strong>what percentage of your library's available public API methods are actually being used by your dependents</strong>.
-                It helps you understand which public methods are popular and which ones might be candidates for deprecation or removal.
-              </p>
-            </div>
-
-            {/* If needs extraction */}
-            {needsExtraction && (
-              <div className="bg-yellow-50 border border-yellow-200 p-6 rounded-lg">
-                <h3 className="text-lg font-semibold text-yellow-900 mb-4">
-                  Available public API methods Not Yet Extracted
-                </h3>
-                <p className="text-yellow-800 mb-4">
-                  The available public API methods for this library version have not been extracted yet.
-                </p>
-                <div className="bg-yellow-100 p-4 rounded font-mono text-sm text-yellow-900">
-                  <p className="font-semibold mb-2">If you want this analytics</p>
-                  <code className="block">Please reach out to us through our contact page</code>
-                </div>
-                <p className="text-yellow-700 mt-4 text-sm">
-                  Note: Extraction can take several minutes for large libraries. Once complete, we will notify you.
-                </p>
-              </div>
-            )}
-
-            {/* API Surface Data */}
-            {apiSurfaceData && !needsExtraction && (
-              <>
-                {/* Stats Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-                    <h2 className="text-sm font-semibold text-gray-600 mb-2">Available in Library</h2>
-                    <p className="text-3xl font-bold text-blue-600">{apiSurfaceData.totalAvailableApis}</p>
-                    <p className="text-xs text-gray-500 mt-1">Total public API methods you provide</p>
-                  </div>
-                  <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-                    <h2 className="text-sm font-semibold text-gray-600 mb-2">Used by Dependents</h2>
-                    <p className="text-3xl font-bold text-green-600">{apiSurfaceData.totalUsedApis}</p>
-                    <p className="text-xs text-gray-500 mt-1">public methods actually used</p>
-                  </div>
-                  <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500">
-                    <h2 className="text-sm font-semibold text-gray-600 mb-2">Never Used</h2>
-                    <p className="text-3xl font-bold text-red-600">{apiSurfaceData.totalUnusedApis}</p>
-                    <p className="text-xs text-gray-500 mt-1">Unused public methods</p>
-                  </div>
-                  <div className="bg-white p-6 rounded-lg shadow border-l-4 border-purple-500">
-                    <h2 className="text-sm font-semibold text-gray-600 mb-2">Usage Rate</h2>
-                    <p className="text-3xl font-bold text-purple-600">{apiSurfaceData.usagePercentage}%</p>
-                    <p className="text-xs text-gray-500 mt-1">Of your public API methods are used</p>
-                  </div>
-                </div>
-
-                {/* Visual Breakdown */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4 text-gray-700">API Surface Breakdown</h3>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <PieChart>
-                        <Pie
-                          data={pieSlices([
-                            { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
-                            { name: "Never Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" }
-                          ])}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={100}
-                          label={({ percent }) => `${(percent * 100).toFixed(1)}%`}
-                        >
-                          {pieSlices([
-                            { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
-                            { name: "Never Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" }
-                          ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
+              {apiSurfaceData && !needsExtraction && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+                      <h2 className="text-sm font-semibold text-gray-600 mb-2">Available in Library <InfoIcon text={API_INFO} /></h2>
+                      <p className="text-3xl font-bold text-blue-600">{apiSurfaceData.totalAvailableApis.toLocaleString()}</p>
+                      <p className="text-xs text-gray-500 mt-1">Total public API methods you provide</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+                      <h2 className="text-sm font-semibold text-gray-600 mb-2">Used by Dependents</h2>
+                      <p className="text-3xl font-bold text-green-600">{apiSurfaceData.totalUsedApis.toLocaleString()}</p>
+                      <p className="text-xs text-gray-500 mt-1">public methods actually used</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500">
+                      <h2 className="text-sm font-semibold text-gray-600 mb-2">Not used by these projects</h2>
+                      <p className="text-3xl font-bold text-red-600">{apiSurfaceData.totalUnusedApis.toLocaleString()}</p>
+                      <p className="text-xs text-gray-500 mt-1">Public methods the analyzed projects do not call</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow border-l-4 border-purple-500">
+                      <h2 className="text-sm font-semibold text-gray-600 mb-2">Usage Rate</h2>
+                      <p className="text-3xl font-bold text-purple-600">{apiSurfaceData.usagePercentage}%</p>
+                      <p className="text-xs text-gray-500 mt-1">Of your public API methods are used</p>
+                    </div>
                   </div>
 
-                  <div className="bg-white p-6 rounded-lg shadow">
-                    <h3 className="text-lg font-semibold mb-4 text-gray-700">Key Insights</h3>
-                    <div className="space-y-4">
-                      <div className="flex items-start">
-                        <div className="w-2 h-2 bg-green-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                        <div>
-                          <p className="font-semibold text-gray-700">{apiSurfaceData.totalUsedApis} APIs are actively used</p>
-                          <p className="text-sm text-gray-600">These are the core public API methods your dependents rely on</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="bg-white p-6 rounded-lg shadow">
+                      <h3 className="text-lg font-semibold mb-4 text-gray-700">API Surface Breakdown</h3>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <PieChart>
+                          <Pie
+                            data={pieSlices([
+                              { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
+                              { name: "Not used by these projects", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
+                            ])}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={100}
+                            label={({ percent }) => `${(percent * 100).toFixed(1)}%`}
+                          >
+                            {pieSlices([
+                              { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
+                              { name: "Not used by these projects", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
+                            ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg shadow">
+                      <h3 className="text-lg font-semibold mb-4 text-gray-700">Key Insights</h3>
+                      <div className="space-y-4">
+                        <div className="flex items-start">
+                          <div className="w-2 h-2 bg-green-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                          <div>
+                            <p className="font-semibold text-gray-700">{apiSurfaceData.totalUsedApis.toLocaleString()} APIs are actively used</p>
+                            <p className="text-sm text-gray-600">These are the core public API methods your dependents rely on</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-start">
-                        <div className="w-2 h-2 bg-red-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                        <div>
-                          <p className="font-semibold text-gray-700">{apiSurfaceData.totalUnusedApis} methods are never used</p>
-                          <p className="text-sm text-gray-600">Consider these for better documentation or design decisions</p>
+                        <div className="flex items-start">
+                          <div className="w-2 h-2 bg-red-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                          <div>
+                            <p className="font-semibold text-gray-700">{apiSurfaceData.totalUnusedApis.toLocaleString()} methods are not used by these projects</p>
+                            <p className="text-sm text-gray-600">Consider these for better documentation or design decisions</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-start">
-                        <div className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                        <div>
-                          <p className="font-semibold text-gray-700">{apiSurfaceData.usagePercentage}% usage rate</p>
-                          <p className="text-sm text-gray-600">
-                            {apiSurfaceData.usagePercentage > 50
-                              ? "High usage indicates a well-utilized API surface"
-                              : "Low usage suggests opportunity to simplify your API"}
-                          </p>
+                        <div className="flex items-start">
+                          <div className="w-2 h-2 bg-purple-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                          <div>
+                            <p className="font-semibold text-gray-700">{apiSurfaceData.usagePercentage}% usage rate</p>
+                            <p className="text-sm text-gray-600">
+                              {apiSurfaceData.usagePercentage > 50
+                                ? "High usage indicates a well-utilized API surface"
+                                : "Low usage suggests opportunity to simplify your API"}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
-                  <p className="text-green-800 text-center font-semibold"> {apiSurfaceData.message}</p>
-                </div>
+                  <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
+                    <p className="text-green-800 text-center font-semibold">{apiSurfaceData.message}</p>
+                  </div>
 
-                {apiSurfaceData.unusedApis && apiSurfaceData.unusedApis.length > 0 && (
-                  <div className="bg-white rounded-lg shadow">
-                    <div className="p-6">
-                      <h3 className="text-lg font-semibold mb-4 text-gray-700">Sample Unused public API methods (First 50)</h3>
-                      <p className="text-sm text-gray-600 mb-4">These public API methods are available in your library but never used by any dependent yet</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="bg-white rounded-lg shadow p-6">
+                      <h3 className="text-lg font-semibold mb-2 text-gray-700">Sample used API methods (first 50)</h3>
+                      <p className="text-sm text-gray-600 mb-4">The API methods used by the most projects come first.</p>
                       <div className="bg-gray-50 p-4 rounded max-h-96 overflow-y-auto">
                         <ul className="space-y-1 font-mono text-xs text-gray-700">
-                          {apiSurfaceData.unusedApis.map((api, idx) => (
-                            <li key={idx} className="py-1 border-b border-gray-200 last:border-0">{api}</li>
+                          {apiSurfaceData.topUsedApis.map((a) => (
+                            <li key={a.signature} className="py-1 border-b border-gray-200 last:border-0 flex justify-between gap-4">
+                              <span className="break-all">{a.signature}</span>
+                              <span className="whitespace-nowrap text-gray-500">{a.projects.toLocaleString()} {a.projects === 1 ? "project" : "projects"}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg shadow p-6">
+                      <h3 className="text-lg font-semibold mb-2 text-gray-700">Sample unused API methods (first 50)</h3>
+                      <p className="text-sm text-gray-600 mb-4">These API methods are available in your library but not used by the analyzed projects.</p>
+                      <div className="bg-gray-50 p-4 rounded max-h-96 overflow-y-auto">
+                        <ul className="space-y-1 font-mono text-xs text-gray-700">
+                          {apiSurfaceData.unusedApis.map((api) => (
+                            <li key={api} className="py-1 border-b border-gray-200 last:border-0 break-all">{api}</li>
                           ))}
                         </ul>
                       </div>
                     </div>
                   </div>
-                )}
-              </>
-            )}
+                </>
+              )}
 
-            {/* Test Coverage Card */}
-            {loading ? (
-              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+              <div className="bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-2xl font-bold mb-4 text-gray-800">Usage-Based API Test Coverage</h2>
-                {/* Explanation */}
-                <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg mb-6">
-                  <p className="text-sm text-purple-800">
-                    <strong>What is Usage-Based API Test Coverage?</strong> Measures how well the API methods used by dependents are tested by Library's test suite.
-                  </p>
-                </div>
-                <div className="flex items-center justify-center py-12">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                  <span className="ml-3 text-gray-600">Loading...</span>
-                </div>
-              </div>
-            ) : testCoverageError ? (
-              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800">Usage-Based API Test Coverage</h2>
-                {/* Explanation */}
                 <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg mb-6">
                   <p className="text-sm text-purple-800">
                     <strong>What is Usage-Based API Test Coverage?</strong> Measures how well the API methods used by dependents are tested by Library's test suite.
                   </p>
                 </div>
 
-                <CoverageUnavailable coverage={testCoverageError} />
-              </div>
-            ) : testCoverageData && (
-              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800">Usage-Based API Test Coverage</h2>
-                {/* Explanation */}
-                <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg mb-6">
-                  <p className="text-sm text-purple-800">
-                    <strong>What is Usage-Based API Test Coverage?</strong> Measures how well the API methods used by dependents are tested by Library's test suite.
-                  </p>
-                </div>
+                {testCoverageError && <CoverageUnavailable coverage={testCoverageError} />}
 
-                {/* Main Coverage Comparison */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  {/* Usage-Based Coverage - Primary Focus */}
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg border-2 border-blue-300 relative">
-                    <div className="absolute top-3 right-3">
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-200 text-blue-800">
-                        What's used and tested
-                      </span>
-                    </div>
-                    <div className="text-sm text-blue-600 font-semibold mb-2">Usage-Based Coverage</div>
-                    <div className="text-5xl font-bold text-blue-700 mb-3">
-                      {testCoverageData.usageBasedCoverage}%
-                    </div>
-                    <div className="text-sm text-blue-600 mb-3">
-                      {testCoverageData.coveredByTests.toLocaleString()} / {testCoverageData.totalUsedApis.toLocaleString()} used methods have tests
-                    </div>
-                    <div className="w-full bg-blue-200 rounded-full h-3">
-                      <div
-                        className="bg-blue-600 h-3 rounded-full transition-all duration-500"
-                        style={{ width: `${testCoverageData.usageBasedCoverage}%` }}
-                      />
-                    </div>
-                    <div className="mt-3 text-xs text-blue-700">
-                      <strong>Focus:</strong> Public API methods used by {testCoverageData.summary.totalDependents.toLocaleString()} dependents
-                    </div>
-                  </div>
-
-                  {/* Overall Project Coverage - Reference */}
-                  <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-lg border border-gray-300 relative">
-                    <div className="absolute top-3 right-3">
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
-                        Reference
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-600 font-semibold mb-2">Overall Project Coverage</div>
-                    {/* null when the version's results have no project totals */}
-                    <div className="text-5xl font-bold text-gray-700 mb-3">
-                      {testCoverageData.overallProjectCoverage == null
-                        ? <span className="text-2xl">Not recorded</span>
-                        : `${testCoverageData.overallProjectCoverage}%`}
-                    </div>
-                    <div className="text-sm text-gray-600 mb-3">
-                      All methods (including internal)
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div
-                        className="bg-gray-600 h-3 rounded-full transition-all duration-500"
-                        style={{ width: `${testCoverageData.overallProjectCoverage}%` }}
-                      />
-                    </div>
-                    <div className="mt-3 text-xs text-gray-600">
-                      <strong>Scope:</strong> Entire codebase
-                    </div>
-                  </div>
-                </div>
-
-                {/* Interpretation Alert */}
-                {testCoverageData.summary && (
-                  <div className={`border-l-4 p-4 mb-6 ${testCoverageData.usageBasedCoverage < testCoverageData.overallProjectCoverage
-                    ? 'bg-yellow-50 border-yellow-400'
-                    : 'bg-green-50 border-green-400'
-                    }`}>
-                    <div>
-                      <div>
-                        <h3 className={`text-sm font-medium ${testCoverageData.usageBasedCoverage < testCoverageData.overallProjectCoverage
-                          ? 'text-yellow-800'
-                          : 'text-green-800'
-                          }`}>
-                          {testCoverageData.summary.interpretation}
-                        </h3>
-                        <div className={`mt-2 text-sm ${testCoverageData.usageBasedCoverage < testCoverageData.overallProjectCoverage
-                          ? 'text-yellow-700'
-                          : 'text-green-700'
-                          }`}>
-                          <p>{testCoverageData.summary.mainMessage}</p>
-                          <p className="mt-1">{testCoverageData.summary.comparisonMessage}</p>
+                {testCoverageData && (() => {
+                  const t = testCoverageData;
+                  const share = (n) => (t.usedApisWithCode > 0 ? ((n / t.usedApisWithCode) * 100).toFixed(1) : "0");
+                  const lower = t.overallProjectCoverage != null && t.usageBasedCoverage < t.overallProjectCoverage;
+                  return (
+                    <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg border-2 border-blue-300 relative">
+                          <div className="absolute top-3 right-3">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-200 text-blue-800">
+                              What's used and tested
+                            </span>
+                          </div>
+                          <div className="text-sm text-blue-600 font-semibold mb-2">Usage-Based Coverage</div>
+                          <div className="text-5xl font-bold text-blue-700 mb-3">{t.usageBasedCoverage}%</div>
+                          <div className="text-sm text-blue-600 mb-3">
+                            {t.coveredByTests.toLocaleString()} of {t.usedApisWithCode.toLocaleString()} used APIs with code are covered by tests
+                          </div>
+                          <div className="w-full bg-blue-200 rounded-full h-3">
+                            <div className="bg-blue-600 h-3 rounded-full" style={{ width: `${t.usageBasedCoverage}%` }} />
+                          </div>
+                          <div className="mt-3 text-xs text-blue-700">
+                            Covers the public API methods used by {t.summary.totalDependents.toLocaleString()} dependents.
+                          </div>
                         </div>
-                        {testCoverageData.summary.note && (
-                          <p className="mt-2 text-xs text-gray-600 italic">{testCoverageData.summary.note}</p>
-                        )}
+
+                        <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-6 rounded-lg border border-gray-300 relative">
+                          <div className="absolute top-3 right-3">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                              Reference
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-600 font-semibold mb-2">Overall Project Coverage</div>
+                          <div className="text-5xl font-bold text-gray-700 mb-3">
+                            {t.overallProjectCoverage == null
+                              ? <span className="text-2xl">Not recorded</span>
+                              : `${t.overallProjectCoverage}%`}
+                          </div>
+                          <div className="text-sm text-gray-600 mb-3">All methods (including internal)</div>
+                          <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div className="bg-gray-600 h-3 rounded-full" style={{ width: `${t.overallProjectCoverage || 0}%` }} />
+                          </div>
+                          <div className="mt-3 text-xs text-gray-600">Covers the entire codebase.</div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                )}
 
-                {/* Quick Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <div className="text-sm text-green-600 font-semibold mb-2">Have Tests</div>
-                    <div className="text-3xl font-bold text-green-600">
-                      {testCoverageData.coveredByTests.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-green-600 mt-1">
-                      {((testCoverageData.coveredByTests / testCoverageData.totalUsedApis) * 100).toFixed(1)}% of used API methods
-                    </div>
-                  </div>
-
-                  <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-                    <div className="text-sm text-red-600 font-semibold mb-2">Need Tests</div>
-                    <div className="text-3xl font-bold text-red-600">
-                      {testCoverageData.notCoveredByTests.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-red-600 mt-1">
-                      {((testCoverageData.notCoveredByTests / testCoverageData.totalUsedApis) * 100).toFixed(1)}% uncovered
-                    </div>
-                  </div>
-
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <div className="text-sm text-blue-600 font-semibold mb-2">Total Used</div>
-                    <div className="text-3xl font-bold text-blue-600">
-                      {testCoverageData.totalUsedApis.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-blue-600 mt-1">
-                      API methods used by dependents
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action Items - APIs that NEED tests */}
-                {testCoverageData.topUncoveredAPIs && testCoverageData.topUncoveredAPIs.length > 0 && (
-                  <div className="bg-white rounded-lg border-2 border-red-300">
-                    <div className="bg-red-50 px-6 py-4 border-b border-red-200">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-semibold text-red-800">
-                          Priority: Consider adding tests for these {testCoverageData.notCoveredByTests.toLocaleString()} API methods
+                      <div className={`border-l-4 p-4 mb-6 ${lower ? "bg-yellow-50 border-yellow-400" : "bg-green-50 border-green-400"}`}>
+                        <h3 className={`text-sm font-medium ${lower ? "text-yellow-800" : "text-green-800"}`}>
+                          {t.summary.interpretation}
                         </h3>
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-200 text-red-800">
-                          Action Required
-                        </span>
+                        <div className={`mt-2 text-sm ${lower ? "text-yellow-700" : "text-green-700"}`}>
+                          <p>{t.summary.mainMessage}</p>
+                          <p className="mt-1">{t.summary.comparisonMessage}</p>
+                        </div>
+                        {t.summary.note && <p className="mt-2 text-xs text-gray-600 italic">{t.summary.note}</p>}
                       </div>
-                      <p className="text-sm text-red-700 mt-2">
-                        These API methods are actively used by {testCoverageData.summary.totalDependents.toLocaleString()} dependents but have <strong>zero test coverage</strong>.
-                        Adding tests here will have the highest impact on dependent stability.
+
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                          <div className="text-sm text-green-600 font-semibold mb-2">Covered by tests <InfoIcon text={COVERED_INFO} /></div>
+                          <div className="text-3xl font-bold text-green-600">{t.coveredByTests.toLocaleString()}</div>
+                          <div className="text-xs text-green-600 mt-1">{share(t.coveredByTests)}% of used APIs with code</div>
+                        </div>
+                        <div className="bg-red-50 p-4 rounded-lg border border-red-200">
+                          <div className="text-sm text-red-600 font-semibold mb-2">Not covered by tests</div>
+                          <div className="text-3xl font-bold text-red-600">{t.notCoveredByTests.toLocaleString()}</div>
+                          <div className="text-xs text-red-600 mt-1">{share(t.notCoveredByTests)}% of used APIs with code</div>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                          <div className="text-sm text-gray-600 font-semibold mb-2">Not measurable <InfoIcon text={NOT_MEASURABLE_INFO} /></div>
+                          <div className="text-3xl font-bold text-gray-600">{t.notFoundInCoverage.toLocaleString()}</div>
+                          <div className="text-xs text-gray-600 mt-1">Left out of the percentage</div>
+                        </div>
+                        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                          <div className="text-sm text-blue-600 font-semibold mb-2">Total Used</div>
+                          <div className="text-3xl font-bold text-blue-600">{t.totalUsedApis.toLocaleString()}</div>
+                          <div className="text-xs text-blue-600 mt-1">API methods used by dependents</div>
+                        </div>
+                      </div>
+
+                      {t.topUncoveredAPIs && t.topUncoveredAPIs.length > 0 && (
+                        <div className="bg-white rounded-lg border-2 border-red-300">
+                          <div className="bg-red-50 px-6 py-4 border-b border-red-200">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-lg font-semibold text-red-800">
+                                Priority. Consider adding tests for these {t.notCoveredByTests.toLocaleString()} API methods
+                              </h3>
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-200 text-red-800">
+                                Action Required
+                              </span>
+                            </div>
+                            <p className="text-sm text-red-700 mt-2">
+                              These API methods are actively used by dependents but have <strong>zero test coverage</strong>.
+                              Adding tests here will have the highest impact on dependent stability.
+                            </p>
+                          </div>
+                          <div className="p-6">
+                            <div className="bg-gray-50 rounded max-h-96 overflow-y-auto">
+                              <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-100 sticky top-0">
+                                  <tr>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Projects using it</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                      <span className="font-bold">Complexity</span> <span className="font-normal">(Missed ByteCode Instructions)</span>
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {t.topUncoveredAPIs.map((api, idx) => (
+                                    <tr key={api.signature} className="hover:bg-red-50 transition-colors">
+                                      <td className="px-4 py-3 text-sm text-gray-500">{idx + 1}</td>
+                                      <td className="px-4 py-3 text-xs font-mono text-gray-800 break-all">{api.signature}</td>
+                                      <td className="px-4 py-3 text-right text-sm font-semibold text-gray-800">{api.dependentCount.toLocaleString()}</td>
+                                      <td className="px-4 py-3 text-center">
+                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                          {api.instructionsMissed} inst.
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {t.notCoveredByTests > 20 && (
+                              <div className="mt-4 text-center text-sm text-gray-600">
+                                Showing the top 20 of {t.notCoveredByTests.toLocaleString()} uncovered API methods. The list is
+                                sorted by the number of missed bytecode instructions.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </MetricTab>
+          )}
+
+          {activeTab === "community-test-coverage" && (() => {
+            const ctc = communityTestCoverageData;
+            const slices = ctc ? pieSlices([
+              { name: "Fully Covered", value: ctc.NPFullyCovered, color: "#10B981" },
+              { name: "Partially Covered", value: ctc.partiallyCoveredProjects, color: "#F59E0B" },
+              { name: "Not Covered", value: ctc.notCoveredProjects, color: "#EF4444" },
+            ]) : [];
+            const pctValue = ctc ? ctc.communityTestCoverage : 0;
+            const alert = pctValue >= 60
+              ? { box: "bg-green-50 border-green-400", text: "text-green-800" }
+              : pctValue >= 40
+                ? { box: "bg-yellow-50 border-yellow-400", text: "text-yellow-800" }
+                : { box: "bg-red-50 border-red-400", text: "text-red-800" };
+            const interpretation =
+              pctValue >= 80 ? "Excellent! Most dependent projects use only well-tested APIs."
+                : pctValue >= 60 ? "Good coverage, but some dependents rely on untested APIs."
+                  : pctValue >= 40 ? "Moderate coverage. Many dependents use APIs without complete test coverage."
+                    : pctValue >= 20 ? "Low coverage. Most dependents use some untested APIs."
+                      : "Critical! Very few dependents use well tested API methods of your library.";
+            return (
+              <MetricTab
+                title="Community Test Coverage (CTC)"
+                question="What is CTC?"
+                definition={<>Measures the percentage of dependent projects where <strong>ALL</strong> API methods they use from your library are fully covered by your library's tests.</>}
+                basis={basis}
+              >
+                {!ctc && communityTestCoverageError && <CoverageUnavailable coverage={communityTestCoverageError} />}
+                {ctc && (
+                  <div className="bg-white rounded-lg shadow-md p-6 space-y-6">
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-8 rounded-lg border-2 border-purple-300 text-center">
+                      <div className="text-sm text-purple-600 font-semibold mb-2">Community Test Coverage</div>
+                      <div className="text-6xl font-bold text-purple-700 mb-4">{ctc.communityTestCoverage}%</div>
+                      <div className="text-lg text-purple-600 mb-4">
+                        {ctc.NPFullyCovered.toLocaleString()} of {ctc.NPtotal.toLocaleString()} dependents
+                      </div>
+                      <div className="w-full bg-purple-200 rounded-full h-4 mb-4">
+                        <div className="bg-purple-600 h-4 rounded-full" style={{ width: `${ctc.communityTestCoverage}%` }} />
+                      </div>
+                      <p className="text-sm text-purple-700 italic">
+                        {ctc.NPFullyCovered.toLocaleString()} of {ctc.NPtotal.toLocaleString()} projects use only API methods
+                        that are fully covered by the library's tests. The
+                        other {(ctc.NPtotal - ctc.NPFullyCovered).toLocaleString()} use at least one method that is not
+                        fully covered.
                       </p>
                     </div>
 
-                    <div className="p-6">
-                      <div className="bg-gray-50 rounded max-h-96 overflow-y-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-gray-100 sticky top-0">
-                            <tr>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                #
-                              </th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Package
-                              </th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Class
-                              </th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Method
-                              </th>
-                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <span className="font-bold">Complexity</span> <span className="font-normal">(Missed ByteCode Instructions)</span>
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white divide-y divide-gray-200">
-                            {testCoverageData.topUncoveredAPIs.map((api, idx) => (
-                              <tr key={idx} className="hover:bg-red-50 transition-colors">
-                                <td className="px-4 py-3 text-sm text-gray-500">
-                                  {idx + 1}
-                                </td>
-                                <td className="px-4 py-3 text-xs font-mono text-gray-600">
-                                  {api.package}
-                                </td>
-                                <td className="px-4 py-3 text-xs font-mono text-gray-800 font-semibold">
-                                  {api.class}
-                                </td>
-                                <td className="px-4 py-3 text-xs font-mono text-gray-800">
-                                  {api.method}
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                                    {api.instructionsMissed} inst.
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                    <div className={`border-l-4 p-4 ${alert.box}`}>
+                      <h3 className={`text-sm font-medium ${alert.text}`}>{interpretation}</h3>
+                    </div>
 
-                      {testCoverageData.notCoveredByTests > 20 && (
-                        <div className="mt-4 text-center text-sm text-gray-600">
-                          Showing top 20 of {testCoverageData.notCoveredByTests.toLocaleString()} uncovered API methods. 
-                          Note: This list is sorted based on # missed bytecode instructions.
-                        </div>
-                      )}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                        <div className="text-sm text-green-600 font-semibold mb-2">Fully Covered <InfoIcon text={FULLY_COVERED_INFO} /></div>
+                        <div className="text-3xl font-bold text-green-600">{ctc.NPFullyCovered.toLocaleString()}</div>
+                        <div className="text-xs text-green-600 mt-1">Dependents use API methods that are fully covered and tested.</div>
+                      </div>
+                      <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
+                        <div className="text-sm text-yellow-600 font-semibold mb-2">Partially Covered</div>
+                        <div className="text-3xl font-bold text-yellow-600">{ctc.partiallyCoveredProjects.toLocaleString()}</div>
+                        <div className="text-xs text-yellow-600 mt-1">Dependents use some API methods that lack tests in your library's test suite.</div>
+                      </div>
+                      <div className="bg-red-50 p-4 rounded-lg border border-red-200">
+                        <div className="text-sm text-red-600 font-semibold mb-2">Not Covered</div>
+                        <div className="text-3xl font-bold text-red-600">{ctc.notCoveredProjects.toLocaleString()}</div>
+                        <div className="text-xs text-red-600 mt-1">Dependents use API methods that have no test(s) in your library's test suite.</div>
+                      </div>
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <div className="text-sm text-blue-600 font-semibold mb-2">Average Coverage</div>
+                        <div className="text-3xl font-bold text-blue-600">{ctc.averageProjectCoverage}%</div>
+                        <div className="text-xs text-blue-600 mt-1">Across all dependents</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-lg border border-gray-200">
+                      <h3 className="text-lg font-semibold mb-4 text-gray-700">Dependent Projects Breakdown</h3>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <PieChart>
+                          <Pie
+                            data={slices}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={100}
+                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
+                          >
+                            {slices.map((slice) => <Cell key={slice.name} fill={slice.color} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="max-w-2xl">
+                      <Breakdown
+                        title={`The projects use ${ctc.methodsWithCode.toLocaleString()} methods that have code.`}
+                        groups={[
+                          { label: "fully covered", count: ctc.methodsFullyCovered, bar: "bg-green-500", text: "text-green-700", info: FULLY_COVERED_INFO },
+                          { label: "partly covered", count: ctc.methodsPartlyCovered, bar: "bg-yellow-400", text: "text-yellow-700" },
+                          { label: "not covered at all", count: ctc.methodsNotCovered, bar: "bg-red-500", text: "text-red-700" },
+                        ]}
+                      />
                     </div>
                   </div>
                 )}
-              </div>
-            )}
+                {ctc && (
+                  <TopTable
+                    title="Methods not covered at all, and how many projects use them"
+                    column="Method"
+                    rows={ctc.notCoveredMethods.map((m) => ({ name: m.signature, count: m.dependents }))}
+                  />
+                )}
+              </MetricTab>
+            );
+          })()}
 
-          </div>
-        )}
+          {activeTab === "intensity" && intensityData && (() => {
+            const heavy = intensityData.distribution["Very Heavy (200+ APIs)"] || 0;
+            const leader = intensityData.topHeavyUsers[0];
+            const cards = [
+              { label: "Mean", value: intensityData.stats.mean, border: "border-blue-500", text: "text-blue-600", note: "APIs per dependent" },
+              { label: "Median", value: intensityData.stats.median, border: "border-green-500", text: "text-green-600", note: "APIs per dependent" },
+              { label: "Max", value: intensityData.stats.max, border: "border-orange-500", text: "text-orange-600", note: "Most APIs used" },
+              { label: "Min", value: intensityData.stats.min, border: "border-purple-500", text: "text-purple-600", note: "Least APIs used" },
+            ];
+            return (
+              <MetricTab
+                title="Usage Intensity"
+                question="What is Usage Intensity?"
+                definition="Usage intensity is the number of different APIs of the library that a dependent project uses. A project with a high usage intensity depends on more of the library, so changes to the API are more likely to affect it."
+                basis={basis}
+              >
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  {cards.map((c) => (
+                    <div key={c.label} className={`bg-white p-6 rounded-lg shadow border-l-4 ${c.border}`}>
+                      <h2 className="text-sm font-semibold text-gray-600 mb-2">{c.label}</h2>
+                      <p className={`text-3xl font-bold ${c.text}`}>{c.value}</p>
+                      <p className="text-xs text-gray-500 mt-1">{c.note}</p>
+                    </div>
+                  ))}
+                </div>
 
-
-
-
-        {/* Community Test Coverage Tab */}
-        {!communityTestCoverageData && communityTestCoverageError && activeTab === "community-test-coverage" && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-2xl font-bold mb-4 text-gray-800">Community Test Coverage (CTC)</h2>
-            <CoverageUnavailable coverage={communityTestCoverageError} />
-          </div>
-        )}
-        {communityTestCoverageData && activeTab === "community-test-coverage" && (
-          <div className="space-y-8">
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-2xl font-bold mb-4 text-gray-800">Community Test Coverage (CTC)</h2>
-
-              {/* Explanation */}
-              <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg mb-6">
-                <p className="text-sm text-purple-800">
-                  <strong>What is CTC?</strong> Measures the percentage of dependent projects where <strong>ALL</strong> API methods they use from your library are fully covered by your library's tests.
-                </p>
-              </div>
-
-              {/* Main CTC Metric */}
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-8 rounded-lg border-2 border-purple-300 mb-6">
-                <div className="text-center">
-                  <div className="text-sm text-purple-600 font-semibold mb-2">Community Test Coverage</div>
-                  <div className="text-6xl font-bold text-purple-700 mb-4">
-                    {communityTestCoverageData.communityTestCoverage}%
-                  </div>
-                  <div className="text-lg text-purple-600 mb-4">
-                    {communityTestCoverageData.NPFullyCovered.toLocaleString()} of {communityTestCoverageData.NPtotal.toLocaleString()} dependents
-                  </div>
-                  <div className="w-full bg-purple-200 rounded-full h-4 mb-4">
-                    <div
-                      className="bg-purple-600 h-4 rounded-full transition-all duration-500"
-                      style={{ width: `${communityTestCoverageData.communityTestCoverage}%` }}
-                    />
-                  </div>
-                  <p className="text-sm text-purple-700 italic">
-                    {communityTestCoverageData.summary.mainMessage}
+                <div className="bg-white p-6 rounded-lg shadow">
+                  <p className="text-base text-gray-800">
+                    Half of the projects use {intensityData.stats.median.toLocaleString()} APIs or
+                    fewer. <InfoIcon text={INTENSITY_API_INFO} />
+                    {heavy > 0 && leader && (
+                      <> {heavy.toLocaleString()} {heavy === 1 ? "project uses" : "projects use"} more than 200,
+                        led by <span className="font-mono">{leader.jarFile}</span> ({leader.usageCount.toLocaleString()} APIs).</>
+                    )}
                   </p>
                 </div>
-              </div>
 
-              {/* Interpretation Alert */}
-              <div className={`border-l-4 p-4 mb-6 ${communityTestCoverageData.communityTestCoverage >= 60
-                ? 'bg-green-50 border-green-400'
-                : communityTestCoverageData.communityTestCoverage >= 40
-                  ? 'bg-yellow-50 border-yellow-400'
-                  : 'bg-red-50 border-red-400'
-                }`}>
-                <div>
-                  <div>
-                    <h3 className={`text-sm font-medium ${communityTestCoverageData.communityTestCoverage >= 60
-                      ? 'text-green-800'
-                      : communityTestCoverageData.communityTestCoverage >= 40
-                        ? 'text-yellow-800'
-                        : 'text-red-800'
-                      }`}>
-                      {communityTestCoverageData.summary.interpretation}
-                    </h3>
-                  </div>
-                </div>
-              </div>
-
-              {/* Breakdown Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm text-green-600 font-semibold">Fully Covered</div>
-                  </div>
-                  <div className="text-3xl font-bold text-green-600">
-                    {communityTestCoverageData.summary.fullyCoveredCount.toLocaleString()}
-                  </div>
-                  <div className="text-xs text-green-600 mt-1">
-                    Dependents use API methods that are fully covered and tested.
-                  </div>
+                <div className="bg-white p-6 rounded-lg shadow">
+                  <h3 className="text-lg font-semibold mb-4 text-gray-700">Usage Intensity Distribution</h3>
+                  <p className="text-sm text-gray-600 mb-4">How many APIs do dependents typically use?</p>
+                  <ResponsiveContainer width="100%" height={400}>
+                    <BarChart data={Object.entries(intensityData.distribution).map(([name, value]) => ({ name, value }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" angle={-15} textAnchor="end" height={80} />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#8B5CF6" name="Dependents" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
 
-                <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm text-yellow-600 font-semibold">Partially Covered</div>
-                  </div>
-                  <div className="text-3xl font-bold text-yellow-600">
-                    {communityTestCoverageData.summary.partiallyCoveredCount.toLocaleString()}
-                  </div>
-                  <div className="text-xs text-yellow-600 mt-1">
-                    Dependents use some API methods that lack tests in your library's test suite.
-                  </div>
-                </div>
+                <TopTable
+                  title="Top 10 Heavy Users"
+                  column="Dependent"
+                  countColumn="APIs used"
+                  rows={intensityData.topHeavyUsers.map((u) => ({ name: u.jarFile, count: u.usageCount }))}
+                />
+              </MetricTab>
+            );
+          })()}
 
-                <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm text-red-600 font-semibold">Not Covered</div>
-                  </div>
-                  <div className="text-3xl font-bold text-red-600">
-                    {communityTestCoverageData.summary.notCoveredCount.toLocaleString()}
-                  </div>
-                  <div className="text-xs text-red-600 mt-1">
-                    Dependents use API methods that have no test(s) in your library's test suite.
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm text-blue-600 font-semibold">Average Coverage</div>
-                  </div>
-                  <div className="text-3xl font-bold text-blue-600">
-                    {communityTestCoverageData.summary.averageProjectCoverage}%
-                  </div>
-                  <div className="text-xs text-blue-600 mt-1">
-                    Across all dependents
-                  </div>
-                </div>
-              </div>
-
-              {/* Visual Breakdown */}
-              <div className="bg-white p-6 rounded-lg border border-gray-200">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Dependent Projects Breakdown</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={pieSlices([
-                        {
-                          name: "Fully Covered",
-                          value: communityTestCoverageData.summary.fullyCoveredCount,
-                          color: "#10B981"
-                        },
-                        {
-                          name: "Partially Covered",
-                          value: communityTestCoverageData.summary.partiallyCoveredCount,
-                          color: "#F59E0B"
-                        },
-                        {
-                          name: "Not Covered",
-                          value: communityTestCoverageData.summary.notCoveredCount,
-                          color: "#EF4444"
-                        }
-                      ])}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-                    >
-                      {pieSlices([
-                        { name: "Fully Covered", value: communityTestCoverageData.summary.fullyCoveredCount, color: "#10B981" },
-                        { name: "Partially Covered", value: communityTestCoverageData.summary.partiallyCoveredCount, color: "#F59E0B" },
-                        { name: "Not Covered", value: communityTestCoverageData.summary.notCoveredCount, color: "#EF4444" },
-                      ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-        )}
-
-
-        {/* Usage Intensity Tab */}
-        {intensityData && activeTab === "intensity" && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Mean</h2>
-                <p className="text-3xl font-bold text-blue-600">{intensityData.stats.mean}</p>
-                <p className="text-xs text-gray-500 mt-1">Public API methods per dependent</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Median</h2>
-                <p className="text-3xl font-bold text-green-600">{intensityData.stats.median}</p>
-                <p className="text-xs text-gray-500 mt-1">Public API methods per dependent</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-orange-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Max</h2>
-                <p className="text-3xl font-bold text-orange-600">{intensityData.stats.max}</p>
-                <p className="text-xs text-gray-500 mt-1">Most Public API methods used</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-purple-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Min</h2>
-                <p className="text-3xl font-bold text-purple-600">{intensityData.stats.min}</p>
-                <p className="text-xs text-gray-500 mt-1">Least Public API methods used</p>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-semibold mb-4 text-gray-700">Usage Intensity Distribution</h3>
-              <p className="text-sm text-gray-600 mb-4">How many Public API methods do dependents typically use?</p>
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={Object.entries(intensityData.distribution).map(([name, value]) => ({ name, value }))}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" angle={-15} textAnchor="end" height={80} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#8B5CF6" name="Dependents" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Top 20 Heavy Users</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">#</th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">Dependent</th>
-                        <th className="px-4 py-3 text-right font-semibold text-gray-600">API Methods Used</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {intensityData.topHeavyUsers.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-600">{idx + 1}</td>
-                          <td className="px-4 py-3 text-blue-600 font-mono text-xs">{item.jarFile}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-purple-600">{item.usageCount}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Packages & Classes Tab */}
-        {packageData && activeTab === "packages" && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Total Packages Used</h2>
-                <p className="text-3xl font-bold text-green-600">{packageData.totalPackages}</p>
-              </div>
-              <div className="bg-white p-6 rounded-lg shadow border-l-4 border-orange-500">
-                <h2 className="text-sm font-semibold text-gray-600 mb-2">Total Classes Used</h2>
-                <p className="text-3xl font-bold text-orange-600">{packageData.totalClasses}</p>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-semibold mb-4 text-gray-700">Top 10 Most Used Packages</h3>
-              <ResponsiveContainer width="100%" height={500}>
-                <BarChart data={packageData.topPackages} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" />
-                  <YAxis dataKey="name" type="category" width={300} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="dependentCount" fill="#10B981" name="Dependents" />
-                  <Bar dataKey="totalUsage" fill="#3B82F6" name="Total Usage" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4 text-gray-700">Top 15 Most Used Classes</h3>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">#</th>
-                        <th className="px-4 py-3 text-left font-semibold text-gray-600">Class</th>
-                        <th className="px-4 py-3 text-right font-semibold text-gray-600">Dependents</th>
-                        <th className="px-4 py-3 text-right font-semibold text-gray-600">Total Usage</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {packageData.topClasses.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-600">{idx + 1}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-blue-600">{item.name}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-green-600">{item.dependentCount}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-blue-600">{item.totalUsage}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-
+          </>
+          );
+        })()}
 
         {/* All card ends before below if the global div*/}
 

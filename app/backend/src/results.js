@@ -103,7 +103,9 @@ async function load() {
     SELECT a.library_ga, a.version, a.api_id, a.package, a.class_name, a.member, a.descriptor,
            CASE WHEN a.package = '' THEN a.class_name ELSE a.package || '.' || a.class_name END
              || '.' || a.member AS signature,
-           c.status, coalesce(c.instruction_missed, 0) AS instruction_missed,
+           -- Older results count abstract methods with untested implementations as no_code.
+           CASE WHEN c.status = 'no_code' AND c.overrides > 0 THEN 'not_covered' ELSE c.status END AS status,
+           coalesce(c.instruction_missed, 0) AS instruction_missed,
            coalesce(c.instruction_covered, 0) AS instruction_covered
     FROM apis a
     LEFT JOIN api_coverage c USING (library_ga, version, api_id)
@@ -213,14 +215,14 @@ async function libraryVersion(req, res) {
 
 /**
  * Whether a version has test coverage, and why not if it has none.
- * Results stored before reasons were added get a general reason.
+ * Results stored before reasons were added have no reason.
  */
 function coverage(summary) {
   if (summary.coverage_status === "ok") return { available: true, status: "ok", reason: null, error: null };
   return {
     available: false,
     status: summary.coverage_status,
-    reason: summary.coverage_reason || "Test coverage could not be measured for this version.",
+    reason: summary.coverage_reason || null,
     error: summary.coverage_error || null,
   };
 }

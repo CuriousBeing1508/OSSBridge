@@ -175,6 +175,25 @@ router.get("/analytics", handle("analytics", async (req, res) => {
   }
 
   const dependentsUsingMethod = byDependent.size;
+
+  // Other methods used by the same dependents. They are ranked by how much their users overlap,
+  // so that methods used by almost every dependent do not top every list.
+  const usedTogether = await results.query(`
+    WITH users AS (
+      SELECT DISTINCT u.dependent, m.signature
+      FROM uses u JOIN api_methods m USING (library_ga, version, api_id)
+      WHERE u.library_ga = $ga AND u.version = $version),
+    mine AS (SELECT dependent FROM users WHERE signature = $signature),
+    totals AS (SELECT signature, count(*) AS dependents FROM users GROUP BY signature),
+    shared AS (
+      SELECT signature, count(*) AS projects FROM users JOIN mine USING (dependent)
+      WHERE signature <> $signature GROUP BY signature)
+    SELECT s.signature, s.projects
+    FROM shared s JOIN totals t USING (signature)
+    WHERE s.projects >= 3
+    ORDER BY s.projects / ($mine + t.dependents - s.projects) DESC, s.projects DESC, s.signature
+    LIMIT 5`, { ...params, mine: dependentsUsingMethod });
+
   const adoptionRate = totalDependents > 0 ? round2((dependentsUsingMethod / totalDependents) * 100) : 0;
   const topParameterPatterns = [...patterns.values()]
     .map((p) => ({
@@ -256,6 +275,9 @@ router.get("/analytics", handle("analytics", async (req, res) => {
       .sort((a, b) => b.usageCount - a.usageCount)
       .slice(0, 20)
       .map((d) => ({ name: d.name, usageCount: d.usageCount, categories: d.categories, uniquePatterns: d.patterns.size })),
+
+    usedTogether,
+    usedTogetherBase: dependentsUsingMethod,
 
     insights,
 

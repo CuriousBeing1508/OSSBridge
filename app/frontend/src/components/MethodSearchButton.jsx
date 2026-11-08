@@ -203,6 +203,30 @@ const MethodSearchModal = ({ isOpen, onClose, library, version }) => {
                   <p className="mt-2 text-xs font-medium">{analytics.summary.recommendation}</p>
                 </div>
 
+                {analytics.usedTogether && analytics.usedTogether.length > 0 && (
+                  <div className="bg-white border border-gray-200 rounded-lg p-3">
+                    <h4 className="font-semibold text-sm text-gray-800 mb-1">Often used together with</h4>
+                    <p className="text-xs text-gray-600 mb-2">
+                      Projects that use this method also often use these methods.
+                    </p>
+                    <ul className="divide-y divide-gray-100">
+                      {analytics.usedTogether.map((m) => (
+                        <li key={m.signature}>
+                          <button
+                            onClick={() => handleSelectMethod(m.signature)}
+                            className="w-full flex justify-between items-center gap-2 py-1.5 text-left hover:bg-gray-50"
+                          >
+                            <code className="text-xs text-blue-700 break-all">{m.signature}</code>
+                            <span className="text-xs text-gray-600 flex-shrink-0">
+                              {m.projects} of {analytics.usedTogetherBase} projects
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {/* Insights */}
                 {analytics.insights && analytics.insights.length > 0 && (
                   <div>
