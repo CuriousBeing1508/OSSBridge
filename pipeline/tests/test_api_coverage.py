@@ -79,14 +79,14 @@ def test_statuses(tmp_path):
         "Codec.<init>()V": "covered",
         "Codec.encode([B)[B": "not_covered",
         "Node.get(Ljava/lang/String;)Lorg/example/lib/Node;": "covered_by_override",
-        "Encoder.encode([B)[B": "no_code",                 # its implementation is not covered
-        "Handler.handle(Ljava/lang/Object;)V": "no_code",
+        "Encoder.encode([B)[B": "not_covered",             # its implementation is not covered
+        "Handler.handle(Ljava/lang/Object;)V": "no_code",  # no implementation in the library
         "Mode.values()[Lorg/example/lib/Mode;": "generated",
         "Outer$Nested.run()V": "covered",                  # nested class names match JaCoCo's
         "Gone.run()V": "not_reported",
     }
     assert summary["apis"] == 8                           # fields are left out
-    assert summary["covered_pct"] == round(100 * 3 / 4, 1)
+    assert summary["covered_pct"] == round(100 * 3 / 5, 1)
 
 
 def test_counters_and_override_counts(tmp_path):

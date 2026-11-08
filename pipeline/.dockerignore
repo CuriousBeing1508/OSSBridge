@@ -1,6 +1,4 @@
 # Only what the Dockerfile copies is needed; keep the build context small
-AutomatedJarDownload/
-DependentCollector/
 goblin-neo4j/
 **/target/
 **/__pycache__/

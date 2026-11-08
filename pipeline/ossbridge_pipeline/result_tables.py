@@ -13,8 +13,7 @@ api_id = "<package>.<Class>.<member><descriptor>" for methods and constructors
 for fields, e.g.
     org.apache.commons.codec.binary.Hex.<init>(Ljava/nio/charset/Charset;)V
 
-Columns that a source does not provide (e.g. the converter of the old dataset
-folder has no deprecation information) are written as nulls.
+Columns that a run does not provide are written as nulls.
 """
 
 import os

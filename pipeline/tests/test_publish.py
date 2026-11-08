@@ -71,3 +71,16 @@ def test_download_only_missing_keeps_local_files(tmp_path, monkeypatch):
     assert publish.download("o/d", data) == 3                                     # everything
     assert (data / "results" / "apis" / "a.parquet").read_text() == "remote-a"
     assert (data / "dependents-index" / "edges.parquet").read_text() == "edges"
+
+
+def test_download_app_only_asks_for_the_app_index_files(tmp_path, monkeypatch):
+    asked = {}
+
+    def fake_snapshot(repo_id, repo_type, local_dir, allow_patterns):
+        asked["patterns"] = allow_patterns
+
+    import huggingface_hub
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
+    publish.download("o/d", tmp_path, app_only=True)
+    assert asked["patterns"] == ["results/**", "dependents-index/libraries.parquet",
+                                 "dependents-index/versions.parquet", "dependents-index/manifest.json"]

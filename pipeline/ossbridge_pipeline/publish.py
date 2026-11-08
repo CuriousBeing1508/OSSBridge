@@ -22,6 +22,7 @@ lists every version.
 
 USAGE:
     python -m ossbridge_pipeline.publish --download           # get the published index and results
+    python -m ossbridge_pipeline.publish --download --app-only  # only the files the app reads
     python -m ossbridge_pipeline.publish                      # results, index and card
     python -m ossbridge_pipeline.publish --no-index           # skip the index
     python -m ossbridge_pipeline.publish --card-only --dry-run  # print the card only
@@ -164,8 +165,6 @@ Every downloaded jar's SHA-256 and the analyzer's SHA-256 are kept in the run su
   dependents at random; each run's settings, including `top_target`, are in `runs`.
 - Test coverage needs a GitHub repository with a release tag and a Maven or Gradle build;
   `coverage_status` says why when there is none.
-- Versions converted from the original dataset have no deprecation or override
-  information, and their usage is recorded on the class named in the bytecode.
 
 ## Use
 
@@ -194,19 +193,30 @@ def quiet_hub():
     disable_progress_bars()
 
 
+# The app reads only these files of the dependents index.
+APP_INDEX_FILES = ("libraries.parquet", "versions.parquet", "manifest.json")
+
+
 def download(repo_id=DEFAULT_REPO, data_dir=DATA_DIR, folders=("results", "dependents-index"),
-             only_missing=False):
+             only_missing=False, app_only=False):
     """Download published folders into data_dir (data_dir/results, data_dir/dependents-index).
 
     only_missing keeps local files and adds only those that are not there yet.
+    app_only downloads only the index files that the app reads.
     Returns the number of files written.
     """
     quiet_hub()
     from huggingface_hub import snapshot_download
 
+    patterns = []
+    for f in folders:
+        if f == "dependents-index" and app_only:
+            patterns += [f"{f}/{name}" for name in APP_INDEX_FILES]
+        else:
+            patterns.append(f"{f}/**")
     with tempfile.TemporaryDirectory(prefix="ossbridge-download-") as tmp:
         snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=tmp,
-                          allow_patterns=[f"{f}/**" for f in folders])
+                          allow_patterns=patterns)
         written = 0
         for folder in folders:
             src_root = Path(tmp) / folder
@@ -264,6 +274,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Print the dataset card; upload nothing")
     parser.add_argument("--download", action="store_true",
                         help="Download the published dependents index and results into the data folder")
+    parser.add_argument("--app-only", action="store_true",
+                        help="With --download, get only the index files the app reads")
     parser.add_argument("--message", help="Commit message prefix")
     args = parser.parse_args()
 
@@ -272,7 +284,7 @@ def main():
         return
     if args.download:
         try:
-            written = download(args.repo, Path(args.results).parent)
+            written = download(args.repo, Path(args.results).parent, app_only=args.app_only)
         except Exception as e:
             sys.exit(f"Download failed: {type(e).__name__}: {e}")
         print(f"Downloaded {written} files from https://huggingface.co/datasets/{args.repo}")

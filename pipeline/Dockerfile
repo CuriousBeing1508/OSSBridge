@@ -53,7 +53,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=analyzer /src/target/ossbridge-usage-analyzer.jar /opt/ossbridge/
 COPY ossbridge_pipeline ossbridge_pipeline
 COPY DependentsIndex DependentsIndex
-COPY Results Results
 COPY tests tests
 COPY JavaUsageExtractor/asm-based-analysis/src/test/resources/fixtures \
      JavaUsageExtractor/asm-based-analysis/src/test/resources/fixtures

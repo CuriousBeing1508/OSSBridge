@@ -19,7 +19,8 @@ python3 -m venv ../../.venv
 ## Start the Goblin Neo4j database
 
 Only needed to build the index or add libraries to it. Selecting dependents from an
-existing index does not need Neo4j.
+existing index does not need Neo4j. To move to a newer Goblin dump, see
+[Update the dependents index](../Readme.md#update-the-dependents-index-from-a-new-goblin-dump).
 
 ```bash
 cd ..                       # pipeline/
@@ -55,10 +56,11 @@ Or export the whole graph once:
 python build_index.py from-neo4j --out ../../data/dependents-index
 ```
 
-From previously exported CSVs (`Dataset/Neo4jDataset/`, 30 libraries / 190 versions, 824 MB to 25 MB):
+From dependents CSVs exported from Neo4j earlier, such as the `Neo4jDataset/` folder of
+the original dataset:
 
 ```bash
-python build_index.py from-csv --csv-dir ../../data/dataset/Neo4jDataset --out ../../data/dependents-index
+python build_index.py from-csv --csv-dir <folder of CSVs> --out ../../data/dependents-index
 ```
 
 CSV exports do not contain the dependency scope, and `reach` only counts dependents

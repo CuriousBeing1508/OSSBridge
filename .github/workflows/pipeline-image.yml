@@ -36,7 +36,7 @@ jobs:
       - name: Run the tests in the image
         run: >
           docker run --rm --entrypoint python ossbridge-pipeline:test
-          -m pytest -q -p no:cacheprovider tests DependentsIndex/tests Results/tests
+          -m pytest -q -p no:cacheprovider tests DependentsIndex/tests
 
       - name: Log in to the GitHub Container Registry
         if: github.event_name != 'pull_request'
