@@ -292,6 +292,54 @@ router.get("/api-surface-usage", handle("api-surface-usage", async (req, res) =>
   });
   const message = `${usagePercentage}% of your library's available APIs are being used by ${dependents} dependents`;
 
+  // APIs that no analyzed project uses, with their test coverage and whether they are deprecated.
+  // A class is listed only when the coverage report includes it, which leaves out bundled third-party code.
+  const unusedRows = await results.query(`
+    WITH used AS (
+      SELECT DISTINCT api_id FROM uses
+      WHERE library_ga = $ga AND version = $version AND api_id IS NOT NULL),
+    g AS (
+      SELECT m.signature,
+             CASE WHEN m.package = '' THEN m.class_name ELSE m.package || '.' || m.class_name END AS class,
+             bool_or(u.api_id IS NOT NULL) AS used,
+             CASE WHEN bool_or(m.status IN ('covered', 'covered_by_override')) THEN 'covered'
+                  WHEN bool_or(m.status = 'not_covered') THEN 'not_covered'
+                  ELSE 'no_code' END AS coverage,
+             bool_or(coalesce(a.deprecated, false) OR coalesce(a.class_deprecated, false)) AS deprecated,
+             bool_or(m.instruction_covered + m.instruction_missed > 0) AS reported
+      FROM api_methods m
+      LEFT JOIN used u USING (api_id)
+      LEFT JOIN apis a USING (library_ga, version, api_id)
+      WHERE m.library_ga = $ga AND m.version = $version
+      GROUP BY m.signature, class)
+    SELECT class, used, coverage, deprecated, reported, count(*) AS apis FROM g
+    GROUP BY ALL`, { ga: lv.ga, version: lv.version });
+  const unusedCount = (filter) => unusedRows.filter((r) => !r.used && filter(r)).reduce((sum, r) => sum + r.apis, 0);
+  const classes = new Map();
+  for (const r of unusedRows) {
+    const c = classes.get(r.class) || { name: r.class, used: false, reported: false, apis: 0, covered: 0, notCovered: 0, deprecated: 0 };
+    c.used = c.used || r.used;
+    c.reported = c.reported || r.reported;
+    c.apis += r.apis;
+    if (r.coverage === "covered") c.covered += r.apis;
+    if (r.coverage === "not_covered") c.notCovered += r.apis;
+    if (r.deprecated) c.deprecated += r.apis;
+    classes.set(r.class, c);
+  }
+  const unusedClasses = [...classes.values()].filter((c) => !c.used && c.reported);
+  const unusedSummary = {
+    total: unusedCount(() => true),
+    covered: unusedCount((r) => r.coverage === "covered"),
+    notCovered: unusedCount((r) => r.coverage === "not_covered"),
+    noCode: unusedCount((r) => r.coverage === "no_code"),
+    deprecated: unusedCount((r) => r.deprecated),
+    classes: unusedClasses.length,
+    topClasses: unusedClasses
+      .sort((a, b) => b.apis - a.apis || a.name.localeCompare(b.name))
+      .slice(0, 10)
+      .map(({ name, apis, covered, notCovered, deprecated }) => ({ name, apis, covered, notCovered, deprecated })),
+  };
+
   res.json({
     library: req.query.library,
     version: lv.version,
@@ -305,6 +353,7 @@ router.get("/api-surface-usage", handle("api-surface-usage", async (req, res) =>
     topUsedApis: used.slice(0, 50).map(describe),
     // read by the maintainer summary page, which lists them as text
     unusedApis: unused.slice(0, 50).map((g) => g.signature),
+    unusedSummary,
     message,
     summary: {
       message,
@@ -388,7 +437,7 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
 
     topUncoveredAPIs: notCovered
       .filter((g) => g.instruction_missed > 0)
-      .sort((a, b) => b.instruction_missed - a.instruction_missed || b.dependents - a.dependents)
+      .sort((a, b) => b.dependents - a.dependents || b.instruction_missed - a.instruction_missed)
       .slice(0, 20)
       .map((g) => ({
         package: g.package,

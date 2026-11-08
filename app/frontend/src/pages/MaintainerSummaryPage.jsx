@@ -105,6 +105,14 @@ const NOT_MEASURABLE_INFO = "Some APIs have no code that a test could run. These
 const FULLY_COVERED_INFO = "Fully covered means the tests run every line of the method.";
 const API_INFO = "APIs are the public and protected methods and constructors that a dependent can use. Protected "
   + "ones count only in classes that are not final. Overloaded methods with the same name count as one API.";
+const UNUSED_INFO = "This does not mean they are unused or safe to remove. Projects outside Maven Central, "
+  + "applications that are not published, and code that calls the library through reflection or configuration "
+  + "files are not part of this analysis.";
+const CLASS_APIS_INFO = "How many APIs the class has.";
+const CLASS_COVERED_INFO = "How many of these APIs the library's own tests run.";
+const CLASS_NOT_COVERED_INFO = "How many of these APIs have code that no test runs.";
+const CLASS_DEPRECATED_INFO = "How many of these APIs are marked @Deprecated, either on the method itself or because "
+  + "the whole class is deprecated.";
 const INTENSITY_API_INFO = "Here an API is any class, method or field of the library that the project uses.";
 
 const COVERAGE_LABELS = {
@@ -324,6 +332,7 @@ const MaintainerSummaryPage = () => {
           );
           const tabs = [
             ["api-surface", "API Surface Usage"],
+            ["usage-based-coverage", "Usage-Based API Test Coverage"],
             ["community-test-coverage", "Community Test Coverage"],
             ["intensity", "Usage Intensity"],
             ["overview", "What dependents use"],
@@ -426,7 +435,7 @@ const MaintainerSummaryPage = () => {
             <MetricTab
               title="API Surface Usage"
               question="What is API Surface Usage?"
-              definition={<>This shows <strong>what percentage of your library's available public API methods are actually being used by your dependents</strong>. It helps you understand which public methods are popular and which ones might be candidates for deprecation or removal.</>}
+              definition={<>This shows <strong>what percentage of your library's available public API methods are actually being used by your dependents</strong>. It helps you understand which public methods are popular and which ones the analyzed projects do not use.</>}
               basis={basis}
             >
               {needsExtraction && (
@@ -536,44 +545,82 @@ const MaintainerSummaryPage = () => {
                     <p className="text-green-800 text-center font-semibold">{apiSurfaceData.message}</p>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-white rounded-lg shadow p-6">
-                      <h3 className="text-lg font-semibold mb-2 text-gray-700">Sample used API methods (first 50)</h3>
-                      <p className="text-sm text-gray-600 mb-4">The API methods used by the most projects come first.</p>
-                      <div className="bg-gray-50 p-4 rounded max-h-96 overflow-y-auto">
-                        <ul className="space-y-1 font-mono text-xs text-gray-700">
-                          {apiSurfaceData.topUsedApis.map((a) => (
-                            <li key={a.signature} className="py-1 border-b border-gray-200 last:border-0 flex justify-between gap-4">
-                              <span className="break-all">{a.signature}</span>
-                              <span className="whitespace-nowrap text-gray-500">{a.projects.toLocaleString()} {a.projects === 1 ? "project" : "projects"}</span>
-                            </li>
-                          ))}
-                        </ul>
+                  {apiSurfaceData.unusedSummary && apiSurfaceData.unusedSummary.total > 0 && !coverageUnavailable && (() => {
+                    const u = apiSurfaceData.unusedSummary;
+                    return (
+                      <div className="bg-white rounded-lg shadow p-6 space-y-5">
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-700 mb-1">APIs that no analyzed project uses</h3>
+                          <p className="text-sm text-gray-700">
+                            {u.total.toLocaleString()} of the {apiSurfaceData.totalAvailableApis.toLocaleString()} APIs are not used
+                            by any of the {apiSurfaceData.totalDependentsAnalyzed.toLocaleString()} analyzed projects. They may be
+                            worth a review, for example when you plan deprecations or decide which tests matter
+                            less. <InfoIcon text={UNUSED_INFO} />
+                          </p>
+                        </div>
+                        <div>
+                          <Breakdown groups={[
+                            { label: "covered by tests", count: u.covered, bar: "bg-green-500", text: "text-green-700", info: COVERED_INFO },
+                            { label: "not covered by tests", count: u.notCovered, bar: "bg-red-500", text: "text-red-700" },
+                            { label: "no code to test", count: u.noCode, bar: "bg-gray-400", text: "text-gray-600", info: NOT_MEASURABLE_INFO },
+                          ]} />
+                          {u.deprecated > 0 && (
+                            <p className="text-sm text-gray-600 mt-2">
+                              {u.deprecated.toLocaleString()} of them are already deprecated.
+                            </p>
+                          )}
+                        </div>
+                        {u.topClasses.length > 0 && (
+                          <div>
+                            <h4 className="text-base font-semibold text-gray-700 mb-1">Classes that no analyzed project uses</h4>
+                            <p className="text-sm text-gray-600 mb-3">
+                              {u.classes.toLocaleString()} classes have no API that the analyzed projects use. The{" "}
+                              {u.topClasses.length} with the most APIs are shown.
+                            </p>
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full text-sm">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="px-4 py-2 text-left font-semibold text-gray-600">Class</th>
+                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">APIs <InfoIcon text={CLASS_APIS_INFO} /></th>
+                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Covered by tests <InfoIcon text={CLASS_COVERED_INFO} /></th>
+                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Not covered <InfoIcon text={CLASS_NOT_COVERED_INFO} /></th>
+                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Deprecated <InfoIcon text={CLASS_DEPRECATED_INFO} /></th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200">
+                                  {u.topClasses.map((c) => (
+                                    <tr key={c.name}>
+                                      <td className="px-4 py-2 font-mono text-xs text-gray-800 break-all">{c.name}</td>
+                                      <td className="px-4 py-2 text-right font-semibold text-gray-800">{c.apis.toLocaleString()}</td>
+                                      <td className="px-4 py-2 text-right text-green-700">{c.covered.toLocaleString()}</td>
+                                      <td className="px-4 py-2 text-right text-red-700">{c.notCovered.toLocaleString()}</td>
+                                      <td className="px-4 py-2 text-right text-gray-700">{c.deprecated.toLocaleString()}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    <div className="bg-white rounded-lg shadow p-6">
-                      <h3 className="text-lg font-semibold mb-2 text-gray-700">Sample unused API methods (first 50)</h3>
-                      <p className="text-sm text-gray-600 mb-4">These API methods are available in your library but not used by the analyzed projects.</p>
-                      <div className="bg-gray-50 p-4 rounded max-h-96 overflow-y-auto">
-                        <ul className="space-y-1 font-mono text-xs text-gray-700">
-                          {apiSurfaceData.unusedApis.map((api) => (
-                            <li key={api} className="py-1 border-b border-gray-200 last:border-0 break-all">{api}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
+
                 </>
               )}
 
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800">Usage-Based API Test Coverage</h2>
-                <div className="bg-purple-50 border border-purple-200 p-4 rounded-lg mb-6">
-                  <p className="text-sm text-purple-800">
-                    <strong>What is Usage-Based API Test Coverage?</strong> Measures how well the API methods used by dependents are tested by Library's test suite.
-                  </p>
-                </div>
+            </MetricTab>
+          )}
 
+          {activeTab === "usage-based-coverage" && (
+            <MetricTab
+              title="Usage-Based API Test Coverage"
+              question="What is Usage-Based API Test Coverage?"
+              definition={<>Measures how well the API methods used by dependents are tested by Library's test suite.</>}
+              basis={basis}
+            >
+              <div className="bg-white rounded-lg shadow-md p-6">
                 {testCoverageError && <CoverageUnavailable coverage={testCoverageError} />}
 
                 {testCoverageData && (() => {
@@ -661,7 +708,7 @@ const MaintainerSummaryPage = () => {
                           <div className="bg-red-50 px-6 py-4 border-b border-red-200">
                             <div className="flex items-center justify-between">
                               <h3 className="text-lg font-semibold text-red-800">
-                                Priority. Consider adding tests for these {t.notCoveredByTests.toLocaleString()} API methods
+                                Priority. Consider adding tests for these API methods
                               </h3>
                               <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-200 text-red-800">
                                 Action Required
@@ -671,6 +718,12 @@ const MaintainerSummaryPage = () => {
                               These API methods are actively used by dependents but have <strong>zero test coverage</strong>.
                               Adding tests here will have the highest impact on dependent stability.
                             </p>
+                            {t.notCoveredByTests > t.topUncoveredAPIs.length && (
+                              <p className="text-sm text-red-700 mt-1">
+                                The {t.topUncoveredAPIs.length} methods used by the most projects are shown, out
+                                of {t.notCoveredByTests.toLocaleString()} that are not covered.
+                              </p>
+                            )}
                           </div>
                           <div className="p-6">
                             <div className="bg-gray-50 rounded max-h-96 overflow-y-auto">
@@ -701,12 +754,6 @@ const MaintainerSummaryPage = () => {
                                 </tbody>
                               </table>
                             </div>
-                            {t.notCoveredByTests > 20 && (
-                              <div className="mt-4 text-center text-sm text-gray-600">
-                                Showing the top 20 of {t.notCoveredByTests.toLocaleString()} uncovered API methods. The list is
-                                sorted by the number of missed bytecode instructions.
-                              </div>
-                            )}
                           </div>
                         </div>
                       )}

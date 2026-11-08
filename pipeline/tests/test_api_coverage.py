@@ -36,6 +36,7 @@ APIS = [
     ("Node.get(Ljava/lang/String;)Lorg/example/lib/Node;", "method", "false", "class", "get", "false"),
     ("Encoder.encode([B)[B", "method", "true", "interface", "encode", "false"),
     ("Handler.handle(Ljava/lang/Object;)V", "method", "true", "interface", "handle", "false"),
+    ("Visitor.visit()V", "method", "true", "interface", "visit", "false"),
     ("Mode.values()[Lorg/example/lib/Mode;", "method", "false", "enum", "values", "true"),
     ("Outer$Nested.run()V", "method", "false", "class", "run", "false"),
     ("Gone.run()V", "method", "false", "class", "run", "false"),
@@ -44,6 +45,7 @@ APIS = [
 OVERRIDES = [
     ("Node.get(Ljava/lang/String;)Lorg/example/lib/Node;", "ObjectNode.get(Ljava/lang/String;)Lorg/example/lib/Node;"),
     ("Encoder.encode([B)[B", "Codec.encode([B)[B"),      # implementation exists but is not covered
+    ("Visitor.visit()V", "shaded.Impl.visit()V"),         # implementation in bundled code, not in the report
 ]
 
 
@@ -81,11 +83,12 @@ def test_statuses(tmp_path):
         "Node.get(Ljava/lang/String;)Lorg/example/lib/Node;": "covered_by_override",
         "Encoder.encode([B)[B": "not_covered",             # its implementation is not covered
         "Handler.handle(Ljava/lang/Object;)V": "no_code",  # no implementation in the library
+        "Visitor.visit()V": "no_code",                     # its implementation is not in the report
         "Mode.values()[Lorg/example/lib/Mode;": "generated",
         "Outer$Nested.run()V": "covered",                  # nested class names match JaCoCo's
         "Gone.run()V": "not_reported",
     }
-    assert summary["apis"] == 8                           # fields are left out
+    assert summary["apis"] == 9                           # fields are left out
     assert summary["covered_pct"] == round(100 * 3 / 5, 1)
 
 

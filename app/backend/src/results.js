@@ -104,11 +104,17 @@ async function load() {
            CASE WHEN a.package = '' THEN a.class_name ELSE a.package || '.' || a.class_name END
              || '.' || a.member AS signature,
            -- Older results count abstract methods with untested implementations as no_code.
-           CASE WHEN c.status = 'no_code' AND c.overrides > 0 THEN 'not_covered' ELSE c.status END AS status,
+           -- They are not covered only when their package is in the coverage report, which leaves out bundled code.
+           CASE WHEN c.status = 'no_code' AND c.overrides > 0 AND p.reported THEN 'not_covered' ELSE c.status END AS status,
            coalesce(c.instruction_missed, 0) AS instruction_missed,
            coalesce(c.instruction_covered, 0) AS instruction_covered
     FROM apis a
     LEFT JOIN api_coverage c USING (library_ga, version, api_id)
+    LEFT JOIN (
+      SELECT a2.library_ga, a2.version, a2.package,
+             bool_or(coalesce(c2.instruction_covered, 0) + coalesce(c2.instruction_missed, 0) > 0) AS reported
+      FROM apis a2 LEFT JOIN api_coverage c2 USING (library_ga, version, api_id)
+      GROUP BY ALL) p USING (library_ga, version, package)
     WHERE a.kind IN ('method', 'constructor')`);
   index = await loadIndex(con);
   return con;
