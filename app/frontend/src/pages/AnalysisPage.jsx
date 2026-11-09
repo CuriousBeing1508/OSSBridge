@@ -3,12 +3,14 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { getLibraryVersions, getAnalyzeConfig, getAnalyzeStatus, startAnalysis } from "../services/api";
 import Header from "../components/Header";
 import { useLibrary } from "../context/LibraryContext";
-import InfoIcon, { DEPENDENTS_INFO, USED_BY_INFO } from "../components/InfoIcon";
+import InfoIcon from "../components/InfoIcon";
 import { pageParam, pageUrl } from "../utils/pageUrl";
 
-const TIME_INFO = "How long it took to download and analyze the dependents and to run the library's tests. "
-  + "Analyzing a smaller sample of dependents is faster. To do that, start the Analyze library workflow "
-  + "on GitHub with a target.";
+// The tooltip of an analyzed version. It tells how many projects list it and how many call it.
+const versionInfo = (v) =>
+  `${v.dependents.toLocaleString()} ${v.dependents === 1 ? "project lists" : "projects list"} this version as a dependency. `
+  + `${v.analyzedProjects.toLocaleString()} of them call its code, and the results come from these projects. `
+  + "A smaller sample of projects is faster to analyze.";
 
 // A run time in seconds as text, for example 45 seconds, 9 minutes or 1 hour 5 minutes.
 const duration = (seconds) => {
@@ -319,24 +321,15 @@ const AnalysisPage = () => {
                         onClick={() => handleVersionSelect(v.version)}
                         className="text-left bg-green-50 hover:bg-green-600 text-gray-800 hover:text-white py-3 px-4 rounded-xl border-2 border-green-400 hover:border-green-600 transition-all hover:scale-105 shadow-md"
                       >
-                        <span className="block font-semibold break-all">v{v.version}</span>
+                        <span className="block font-semibold break-all">
+                          v{v.version}
+                          {v.dependents > 0 && v.analyzedProjects != null && (
+                            <> <InfoIcon text={versionInfo(v)} /></>
+                          )}
+                        </span>
                         <span className="block text-xs mt-1">Analyzed, see the results</span>
-                        {v.dependents > 0 && (
-                          <span className="block text-xs mt-1">
-                            Used by {v.dependents.toLocaleString()} {v.dependents === 1 ? "project" : "projects"}{" "}
-                            <InfoIcon text={USED_BY_INFO} />
-                          </span>
-                        )}
-                        {v.analyzedProjects != null && (
-                          <span className="block text-xs mt-1">
-                            {v.analyzedProjects.toLocaleString()} of them use its code{" "}
-                            <InfoIcon text={DEPENDENTS_INFO} />
-                          </span>
-                        )}
                         {v.analysisSeconds != null && (
-                          <span className="block text-xs mt-1">
-                            Analysis took {duration(v.analysisSeconds)} <InfoIcon text={TIME_INFO} />
-                          </span>
+                          <span className="block text-xs mt-1">Analysis took {duration(v.analysisSeconds)}</span>
                         )}
                       </button>
                     ) : (() => {
@@ -389,8 +382,7 @@ const AnalysisPage = () => {
                           <span className="block text-xs mt-1">Not analyzed yet</span>
                           <span className="block text-xs">
                             {v.dependents > 0
-                              ? <>Used by {v.dependents.toLocaleString()} {v.dependents === 1 ? "project" : "projects"}{" "}
-                                  <InfoIcon text={USED_BY_INFO} /></>
+                              ? `Used by ${v.dependents.toLocaleString()} ${v.dependents === 1 ? "project" : "projects"}`
                               : "Only used in tests"}
                           </span>
                           {failed && (

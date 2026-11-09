@@ -56,8 +56,6 @@ const InfoIcon = ({ text }) => {
   );
 };
 
-export const USED_BY_INFO = "These projects list this version as a dependency. Test dependencies are not counted.";
-
 export const DEPENDENTS_INFO = "We checked the code of every project that lists this version. Only these projects "
   + "call the library. The others list it but never call it, or their code is not on Maven Central.";
 
