@@ -22,7 +22,7 @@ The **usage branch** finds out how dependent projects use the library.
 - **Step 2. Download jars** downloads the jars of dependents from Maven Central.
 - **Step 3. API Usage analysis** runs the ASM bytecode analyzer on those jars to record which library classes, methods and fields each dependent uses. If a dependent bundles a copy of the library inside its own jar, that copy is skipped, so only the dependent's own code is counted.
 
-Steps 2 and 3 run together in batches (the **collection loop**) until enough dependents that actually use the library have been found, because many declared dependents never call it directly. By default enough means 400 such dependents. The first 300 are taken in order of reach, which is how many other projects depend on a dependent, similar to the "Used By" count on mvnrepository.com. The rest are taken in a random order, so that projects that nobody depends on are also included. The loop also stops when the candidates run out or after 3,000 candidates have been tried.
+Steps 2 and 3 run together in batches (the **collection loop**), because many declared dependents never call the library directly. By default the loop tries every dependent of the version, so the results give a complete picture, and keeps the ones that actually use the library. For a faster run, `--target N` analyzes a sample instead. It stops once N dependents that use the library are found. They are taken first in order of reach, which is how many other projects depend on a dependent, similar to the "Used By" count on mvnrepository.com. The rest are taken in a random order, so that projects that nobody depends on are also included. The time each run takes is stored with its results and shown in the app.
 
 The **API and coverage branch** describes the library itself:
 - **Step 4. Public API** lists the classes, methods, constructors and fields of the library jar that dependents can use (public and protected), with deprecation.
@@ -118,7 +118,7 @@ Run ok: .../data/runs/org.mybatis__mybatis@3.5.16/run.json
   `unavailable` when the library itself does not allow it, for example when it has no release tag on GitHub or is not built with Maven or Gradle. This is not a failure. The app then shows the usage results with a plain reason and the build error. Steps that need coverage are unavailable for the same reason.
 - **Run status:** `ok` (every step ok or unavailable), `partial` (results stored, some steps failed or skipped) or `failed` (nothing stored). The exit code is 0 when the results were stored.
 - **run.json** in the run folder has each step's status, duration, summary and, if it failed, the reason. It is updated while the run goes on.
-- **Options:** `--target`, `--top-target`, `--max-tried` (collection loop),
+- **Options:** `--target`, `--top-target`, `--max-tried` (collection loop, a sample instead of every dependent),
   `--fetch-missing` (add the library from Neo4j if it is not in the dependents index),
   `--skip-coverage`, `--jdk` (build the library with this JDK only), `--timeout` (test suite), `--keep-jars`, `--index`, `--results`.
 
@@ -150,11 +150,16 @@ first with `docker compose up -d goblin-neo4j`). The Goblin graph is a snapshot 
 ```bash
 ../.venv/bin/python -m ossbridge_pipeline.collect \
     --library commons-codec:commons-codec --version 1.17.1 \
-    --target 400 --top-target 300 --batch-size 50 --max-tried 3000
+    --batch-size 50
 ```
 Walks `candidates.csv` in batches; for each batch it downloads the jars (step 2),
-analyzes them (step 3) and keeps the dependents that use the library:
-- **Top tier:** in order of reach until `--top-target` using dependents are selected.
+analyzes them (step 3) and keeps the dependents that use the library. By default every
+candidate is tried and every one that uses the library is selected, e.g. *"Tried all 758
+candidates. 87 of them use the library and were selected."*
+
+With `--target N` it takes a faster sample of N dependents that use the library:
+- **Top tier:** in order of reach until `--top-target` using dependents are selected
+  (all of them when `--top-target` is not given).
 - **Random tier:** in the random order, skipping dependents already tried, until the
   total reaches `--target`.
 - Stops when the target is reached, the candidates run out, or `--max-tried`
@@ -183,9 +188,9 @@ This downloads a random sample of the selected dependents again, checks their SH
 analyzes them again and compares the rows with `usage.csv`. It also reports when the
 analyzer differs from the one recorded in `collection.json`.
 
-For commons-codec 1.17.1 (target 400), all 758 candidates were tried in 16 batches
+For commons-codec 1.17.1, all 758 candidates were tried in 16 batches
 (100 seconds): 87 of the 731 projects with a jar (11.9%) call commons-codec directly, so
-all 87 were selected and the shortfall reported. The run folder is under 2 MB after the
+all 87 were selected. The run folder is under 2 MB after the
 jars are deleted, and `verify` reproduced all 10 sampled dependents.
 
 Steps 2 and 3 can also be run on their own, as described below.
@@ -399,10 +404,10 @@ row says why, in `coverage_status`, `coverage_reason` and `coverage_error`. See
 [Results/README.md](Results/README.md) for the columns and an example query. From
 Python: `store_results.run(Workspace(library, version))`.
 
-**Seeing new results in the app.** When the app reads a local copy (`RESULTS_DIR` in
-`app/.env`), restart its backend with `docker compose restart backend` in `app/`. When it
-reads the published dataset, publish first (below). Results of the Analyze button appear
-by themselves.
+**Seeing new results in the app.** The app checks for new results every 5 minutes and
+loads them by itself. When it reads a local copy (`RESULTS_DIR` in `app/.env`), that is
+the results folder. When it reads the published dataset, publish first (below). Results of
+the Analyze button appear as soon as the run finishes.
 
 ## Run on GitHub Actions
 
@@ -413,7 +418,7 @@ Two workflows in `.github/workflows/`:
 | **Pipeline image** (`pipeline-image.yml`) | Push to `main` that changes `pipeline/` | Builds the image from `pipeline/Dockerfile`, runs the tests in it, publishes it as `ghcr.io/<owner>/ossbridge-pipeline:latest` |
 | **Analyze library** (`analyze-library.yml`) | Actions > Analyze library > Run workflow | Analyzes one library version with that image and publishes the results to the Hugging Face dataset |
 
-**Analyze library** inputs: `release` (`groupId:artifactId:version`), `target`, `top_target`,
+**Analyze library** inputs: `release` (`groupId:artifactId:version`), `target` (`all` by default, or a number for a faster sample), `top_target`,
 `jdk`, `skip_coverage`, `publish` (default on) and `request_id` (optional, shown in the
 run name). It downloads the dependents index and the published results from the
 dataset, runs each pipeline step as its own workflow step (`run --step <name>`, all

@@ -73,6 +73,9 @@ def make_run(tmp_path, with_coverage=True):
     ])
     (ws.collection_json).write_text(json.dumps({"candidates": 2, "tried": 2, "using_library": 1, "selected": 1,
                                                 "target_reached": False}))
+    ws.run_json.write_text(json.dumps({"steps": {
+        "dependents": {"seconds": 1}, "collect": {"seconds": 120}, "api": {"seconds": 2},
+        "coverage": {"seconds": 300}, "api_coverage": {"seconds": 3}, "store": {"status": "running"}}}))
     if with_coverage:
         write_csv(ws.api_coverage_csv, API_COVERAGE_COLUMNS, [
             {"api_id": P + "Codec.encode([B)[B", "kind": "method", "status": "covered_by_override",
@@ -101,6 +104,8 @@ def test_store_writes_all_tables(tmp_path):
                    "tests, api_coverage_pct, instructions_missed, instructions_covered "
                    "FROM library_versions").fetchall() == [
         (["org.example.lib", "org.example.lib.internal"], 2, 1, False, "ok", 42, 100.0, 30, 70)]
+    assert con.execute("SELECT usage_seconds, coverage_seconds, analysis_seconds FROM library_versions").fetchall() == [
+        (121, 305, 426)]
     assert con.execute("SELECT dependent_ga, dependent_version, release_ts, tier, rank, uses_library, selected, "
                    "analyzed, bytecode_instructions FROM dependents ORDER BY rank").fetchall() == [
         ("com.acme:app", "2.0", 1700000000000, "A", 1, True, True, True, 123),

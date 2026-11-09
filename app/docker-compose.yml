@@ -13,6 +13,8 @@ services:
       - PORT=5050
       - RESULTS_PATH=${RESULTS_PATH:-/data/results}
       - INDEX_PATH=${INDEX_PATH:-/data/dependents-index}
+      - SYNC_MINUTES=${SYNC_MINUTES:-5}
+      - DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-1GB}
       # Optional: lets the app start analyses on GitHub Actions (export it in the shell)
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     volumes:

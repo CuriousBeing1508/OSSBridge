@@ -66,8 +66,8 @@ Then in `app/.env`, comment out `RESULTS_PATH` and `INDEX_PATH`, and uncomment
 
 New results reach the local copy in two ways:
 - **The Analyze button.** The app downloads the new results into `data/results/` by itself.
-- **Running the pipeline yourself.** It writes into `data/results/`. Run
-  `docker compose restart backend` in `app/` to load them.
+- **Running the pipeline yourself.** It writes into `data/results/`. The app checks the
+  folder every 5 minutes and loads new results by itself.
 
 To stop the app, run `docker compose down` in `app/`. After changing the code, start it
 again with `--build`.

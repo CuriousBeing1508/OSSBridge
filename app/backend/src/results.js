@@ -1,86 +1,141 @@
 // ====================================================================
 // RESULT TABLES
 // ====================================================================
-// Loads the OSSBridge result tables (Parquet, written by the pipeline's step 7)
-// into an in-memory DuckDB database and answers the routes' queries from it.
+// The backend answers every page from the OSSBridge result tables and the dependents index.
+// They come from a local folder or from the Hugging Face dataset, set in RESULTS_PATH and INDEX_PATH.
 //
-// RESULTS_PATH is a local results folder or the Hugging Face dataset, e.g.
 //   RESULTS_PATH=../data/results
 //   RESULTS_PATH=hf://datasets/rachna1508/ossbridge-results/results
-// Each table is read from <RESULTS_PATH>/<table>/*.parquet.
-//
-// Derived tables shared by the routes:
-//   uses         api_usage with the class each use resolves to (the declaring
-//                class when the analyzer resolved it inside the library), its
-//                package, and the old "usage" text: <class>.<member> : <descriptor>
-//   api_methods  methods and constructors of the library with their test coverage;
-//                signature = <package>.<Class>.<member> groups the overloads
-//                (one "API" in the routes' counts, as in the old dataset)
-//
-// INDEX_PATH is the dependents index (local folder or Hugging Face dataset), e.g.
 //   INDEX_PATH=hf://datasets/rachna1508/ossbridge-results/dependents-index
-// Its summaries list every library and version on Maven Central in the Goblin
-// snapshot, analyzed or not:
+//
+// Data from Hugging Face is first copied to DATA_DIR, so queries never wait on the network.
+// The tables are kept in DuckDB files in DATA_DIR, and DUCKDB_MEMORY_LIMIT caps the memory they use.
+//
+// Every SYNC_MINUTES the backend looks for new or changed files and rebuilds the tables if it finds any.
+// The current tables keep answering while the new ones are built, so a rebuild never blocks a page.
+//
+// Tables built from the results for the routes.
+//   uses         api_usage with the class each use resolves to, its package and a readable usage text
+//   api_methods  methods and constructors with their coverage, grouped by signature into one API per name
+//
+// Tables from the dependents index. Without them the app lists only the analyzed versions.
 //   index_libraries  library_ga, versions, dependents, reach
 //   index_versions   library_ga, library_version, dependents
-// Without them the app lists only the analyzed versions.
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { DuckDBInstance } = require("@duckdb/node-api");
+const { parseHf, currentCommit, syncFolder } = require("./sync");
 
 const RESULTS_PATH = process.env.RESULTS_PATH ||
   path.resolve(__dirname, "../../../data/results");
 const INDEX_PATH = process.env.INDEX_PATH ||
   path.resolve(__dirname, "../../../data/dependents-index");
+const DATA_DIR = process.env.DATA_DIR || path.join(os.tmpdir(), "ossbridge");
+const MEMORY_LIMIT = process.env.DUCKDB_MEMORY_LIMIT || "1GB";
+const SYNC_MINUTES = Number(process.env.SYNC_MINUTES || 5);
 
 const TABLES = ["library_versions", "apis", "dependents", "api_usage", "api_coverage"];
+const INDEX_FILES = ["libraries.parquet", "versions.parquet", "manifest.json"];
 
-let connection = null;
-let loading = null;
+// Data from Hugging Face is read from its copy in DATA_DIR. A local folder is read where it is.
+const RESULTS_DIR = parseHf(RESULTS_PATH) ? path.join(DATA_DIR, "results") : path.resolve(RESULTS_PATH);
+const INDEX_DIR = parseHf(INDEX_PATH) ? path.join(DATA_DIR, "dependents-index") : path.resolve(INDEX_PATH);
+
+let instance = null;
+let admin = null;
+let current = null;
+let refreshing = null;
+let generation = 0;
+let built = { results: null, index: null };
+let indexDb = null;
 let loadedAt = null;
 let index = { available: false, snapshot: null };
+const syncedCommits = new Map();
 
-function root(base) {
-  return (base.includes("://") ? base : path.resolve(base)).replace(/\/$/, "");
+function quoted(text) {
+  return `'${String(text).replace(/'/g, "''")}'`;
 }
 
-function source(table) {
-  return `${root(RESULTS_PATH)}/${table}/*.parquet`;
+// Lists the files of a folder with their size and change time.
+// Two equal lists mean nothing changed since the last build.
+function signature(dir, accept) {
+  const found = [];
+  const walk = (folder) => {
+    if (!fs.existsSync(folder)) return;
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const rel = path.relative(dir, full).split(path.sep).join("/");
+        if (accept(rel)) {
+          const stat = fs.statSync(full);
+          found.push(`${rel}:${stat.size}:${stat.mtimeMs}`);
+        }
+      }
+    }
+  };
+  walk(dir);
+  return found.sort().join("\n");
 }
 
-function quoted(file) {
-  return `'${file.replace(/'/g, "''")}'`;
-}
+const isResultFile = (rel) => TABLES.includes(rel.split("/")[0]) && rel.endsWith(".parquet");
+const isIndexFile = (rel) => INDEX_FILES.includes(rel);
 
-/** Loads the index summaries; empty tables when the index has none. */
-async function loadIndex(con) {
-  const base = root(INDEX_PATH);
-  try {
-    await con.run(`CREATE TABLE index_libraries AS SELECT * FROM read_parquet(${quoted(`${base}/libraries.parquet`)})`);
-    await con.run(`CREATE TABLE index_versions AS SELECT * FROM read_parquet(${quoted(`${base}/versions.parquet`)})`);
-  } catch (err) {
-    console.log(`[INFO] No dependents index summaries at ${base}; listing analyzed versions only (${err.message.split("\n")[0]})`);
-    await con.run("CREATE OR REPLACE TABLE index_libraries (library_ga VARCHAR, versions BIGINT, dependents BIGINT, reach BIGINT)");
-    await con.run("CREATE OR REPLACE TABLE index_versions (library_ga VARCHAR, library_version VARCHAR, dependents BIGINT)");
-    return { available: false, snapshot: null };
+// Starts the single DuckDB that holds every table.
+// One instance means one memory limit covers the old and the new tables during a rebuild.
+async function openInstance() {
+  if (instance) return;
+  fs.mkdirSync(path.join(DATA_DIR, "tmp"), { recursive: true });
+  for (const file of fs.readdirSync(DATA_DIR)) {
+    if (/^(results|index)-\d+\.duckdb(\.wal)?$/.test(file)) fs.rmSync(path.join(DATA_DIR, file), { force: true });
   }
+  instance = await DuckDBInstance.create(":memory:");
+  admin = await instance.connect();
+  await admin.run(`SET memory_limit = ${quoted(MEMORY_LIMIT)}`);
+  await admin.run(`SET temp_directory = ${quoted(path.join(DATA_DIR, "tmp"))}`);
+}
+
+// Builds the index tables in their own file, because the index changes far less often than the results.
+// It returns the name of the attached database, or null when there is no index.
+async function buildIndex(gen) {
+  const libraries = path.join(INDEX_DIR, "libraries.parquet");
+  const versions = path.join(INDEX_DIR, "versions.parquet");
+  if (!fs.existsSync(libraries) || !fs.existsSync(versions)) {
+    console.log(`[INFO] No dependents index summaries in ${INDEX_DIR}. Only analyzed versions are listed.`);
+    index = { available: false, snapshot: null };
+    return null;
+  }
+  const name = `index_${gen}`;
+  await admin.run(`ATTACH ${quoted(path.join(DATA_DIR, `index-${gen}.duckdb`))} AS ${name}`);
+  await admin.run(`CREATE TABLE ${name}.index_libraries AS SELECT * FROM read_parquet(${quoted(libraries)})`);
+  await admin.run(`CREATE TABLE ${name}.index_versions AS SELECT * FROM read_parquet(${quoted(versions)})`);
+  await admin.run(`CHECKPOINT ${name}`);
   let snapshot = null;
   try {
-    const reader = await con.runAndReadAll(
-      `SELECT CAST(source.snapshot AS VARCHAR) AS snapshot FROM read_json_auto(${quoted(`${base}/manifest.json`)})`);
-    snapshot = reader.getRowObjectsJS()[0]?.snapshot ?? null;
+    snapshot = JSON.parse(fs.readFileSync(path.join(INDEX_DIR, "manifest.json"), "utf8")).source?.snapshot ?? null;
   } catch (err) {
-    // The manifest only adds the snapshot date
+    // The manifest only adds the snapshot date.
   }
-  return { available: true, snapshot };
+  index = { available: true, snapshot };
+  return name;
 }
 
-async function load() {
-  const instance = await DuckDBInstance.create(":memory:");
+// Builds the result tables of one generation in a new file and returns its connection.
+// The routes query it with plain table names, so it uses that file as its default database.
+async function buildResults(gen, indexName) {
+  const name = `results_${gen}`;
+  await admin.run(`ATTACH ${quoted(path.join(DATA_DIR, `results-${gen}.duckdb`))} AS ${name}`);
   const con = await instance.connect();
+  await con.run(`USE ${name}`);
   for (const table of TABLES) {
-    const glob = source(table).replace(/'/g, "''");
-    await con.run(`CREATE TABLE ${table} AS SELECT * FROM read_parquet('${glob}', union_by_name = true)`);
+    const glob = path.join(RESULTS_DIR, table, "*.parquet");
+    await con.run(`CREATE TABLE ${table} AS SELECT * FROM read_parquet(${quoted(glob)}, union_by_name = true)`);
+  }
+  // Results stored before the run times were recorded have no time columns.
+  for (const column of ["usage_seconds", "coverage_seconds", "analysis_seconds"]) {
+    await con.run(`ALTER TABLE library_versions ADD COLUMN IF NOT EXISTS ${column} BIGINT`);
   }
   await con.run(`
     CREATE TABLE uses AS
@@ -116,30 +171,110 @@ async function load() {
       FROM apis a2 LEFT JOIN api_coverage c2 USING (library_ga, version, api_id)
       GROUP BY ALL) p USING (library_ga, version, package)
     WHERE a.kind IN ('method', 'constructor')`);
-  index = await loadIndex(con);
-  return con;
+  if (indexName) {
+    await con.run(`CREATE VIEW index_libraries AS SELECT * FROM ${indexName}.index_libraries`);
+    await con.run(`CREATE VIEW index_versions AS SELECT * FROM ${indexName}.index_versions`);
+  } else {
+    await con.run("CREATE TABLE index_libraries (library_ga VARCHAR, versions BIGINT, dependents BIGINT, reach BIGINT)");
+    await con.run("CREATE TABLE index_versions (library_ga VARCHAR, library_version VARCHAR, dependents BIGINT)");
+  }
+  await con.run("CHECKPOINT");
+  return { con, name, file: path.join(DATA_DIR, `results-${gen}.duckdb`), index: indexName, inflight: 0 };
 }
 
-/** Loads (or reloads) the tables; queries wait for a load in progress. */
-async function reload() {
-  loading = load().then((con) => {
-    connection = con;
-    loadedAt = new Date().toISOString();
-    console.log(`[INFO] Result tables loaded from ${RESULTS_PATH}`);
-    if (index.available) console.log(`[INFO] Dependents index summaries loaded from ${INDEX_PATH}`);
-    return con;
-  });
-  try {
-    return await loading;
-  } finally {
-    loading = null;
+// Closes an old generation once no query uses it anymore, and deletes its files.
+// Its index is removed too when the new generation uses another one.
+async function retire(old) {
+  old.retired = true;
+  if (old.inflight > 0 || old.closed) return;
+  old.closed = true;
+  old.con.closeSync();
+  await admin.run(`DETACH ${old.name}`);
+  fs.rmSync(old.file, { force: true });
+  fs.rmSync(`${old.file}.wal`, { force: true });
+  if (old.index && old.index !== current?.index) {
+    await admin.run(`DETACH ${old.index}`);
+    const file = path.join(DATA_DIR, `${old.index.replace("_", "-")}.duckdb`);
+    fs.rmSync(file, { force: true });
+    fs.rmSync(`${file}.wal`, { force: true });
   }
 }
 
-async function getConnection() {
-  if (loading) return loading;
-  if (connection) return connection;
-  return reload();
+// Copies new data from Hugging Face, then rebuilds the tables if any file changed.
+// A failed sync or build keeps the current tables, and the next round tries again.
+async function refresh({ force = false } = {}) {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    // Both folders are read from the same commit when they are in the same dataset.
+    const commits = new Map();
+    const commitOf = async (location) => {
+      const { repo } = parseHf(location);
+      if (!commits.has(repo)) commits.set(repo, await currentCommit(location));
+      return commits.get(repo);
+    };
+    // A folder whose commit has not changed since its last sync needs no listing.
+    for (const [location, dir, keep] of [[RESULTS_PATH, RESULTS_DIR, isResultFile], [INDEX_PATH, INDEX_DIR, isIndexFile]]) {
+      if (!parseHf(location)) continue;
+      const commit = await commitOf(location);
+      if (syncedCommits.get(location) === commit) continue;
+      await syncFolder(location, dir, keep, commit);
+      syncedCommits.set(location, commit);
+    }
+    const results = signature(RESULTS_DIR, isResultFile);
+    const indexFiles = signature(INDEX_DIR, isIndexFile);
+    if (!force && current && results === built.results && indexFiles === built.index) return false;
+
+    await openInstance();
+    const gen = ++generation;
+    const indexChanged = indexFiles !== built.index;
+    const indexName = indexChanged ? await buildIndex(gen) : indexDb;
+    let next;
+    try {
+      next = await buildResults(gen, indexName);
+    } catch (err) {
+      if (indexChanged && indexName) await admin.run(`DETACH ${indexName}`);
+      throw err;
+    }
+    const old = current;
+    current = next;
+    indexDb = indexName;
+    built = { results, index: indexFiles };
+    loadedAt = new Date().toISOString();
+    console.log(`[INFO] Result tables loaded from ${RESULTS_PATH}`);
+    if (old) await retire(old);
+    return true;
+  })();
+  try {
+    return await refreshing;
+  } finally {
+    refreshing = null;
+  }
+}
+
+// Loads the tables when the server starts and then checks for new data every SYNC_MINUTES.
+// If the data cannot be loaded, it tries again after a pause that grows up to five minutes.
+async function start() {
+  for (let pause = 5; !current; pause = Math.min(pause * 2, 300)) {
+    try {
+      await refresh({ force: true });
+    } catch (err) {
+      console.error(`[ERROR] Loading the result tables failed. Trying again in ${pause} seconds. ${err.message}`);
+      await new Promise((resolve) => setTimeout(resolve, pause * 1000));
+    }
+  }
+  if (SYNC_MINUTES > 0) {
+    setInterval(() => {
+      refresh().catch((err) => console.error(`[ERROR] Updating the result tables failed. ${err.message}`));
+    }, SYNC_MINUTES * 60 * 1000).unref();
+  }
+}
+
+// Pages ask for the tables here. Before the first load finishes they get a clear error.
+async function ready() {
+  if (current) return current;
+  const err = new Error("The data is still loading. Please try again in a minute.");
+  err.status = 503;
+  throw err;
 }
 
 function plain(value) {
@@ -153,9 +288,19 @@ function plain(value) {
 
 /** Rows as plain objects; params are bound to $name placeholders. */
 async function query(sql, params = {}) {
-  const con = await getConnection();
-  const reader = await con.runAndReadAll(sql, params);
-  return reader.getRowObjectsJS().map(plain);
+  const gen = await ready();
+  // A rebuild can finish while this query waited, so it asks again for the newest tables.
+  if (gen.closed) return query(sql, params);
+  gen.inflight += 1;
+  try {
+    const reader = await gen.con.runAndReadAll(sql, params);
+    return reader.getRowObjectsJS().map(plain);
+  } finally {
+    gen.inflight -= 1;
+    if (gen.retired && gen.inflight === 0) {
+      retire(gen).catch((err) => console.error(`[ERROR] Closing old result tables failed. ${err.message}`));
+    }
+  }
 }
 
 /**
@@ -237,9 +382,13 @@ module.exports = {
   RESULTS_PATH,
   INDEX_PATH,
   TABLES,
+  RESULTS_DIR,
   index: () => index,
   query,
-  reload,
+  start,
+  refresh,
+  isRefreshing: () => Boolean(refreshing),
+  isLoaded: () => Boolean(current),
   resolveLibrary,
   compareVersions,
   libraryVersion,

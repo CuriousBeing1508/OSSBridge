@@ -146,9 +146,9 @@ For each library version, the pipeline:
    Central dependency graph), keeping each project's latest release and dropping
    test-scoped dependencies;
 2. downloads dependents' jars from Maven Central and
-3. analyzes their bytecode (ASM) until enough dependents that use the library are found:
-   a top tier by reach and a random tier; dependents that only declare the dependency are
-   counted but not selected;
+3. analyzes their bytecode (ASM), by default for every dependent; a run with a target
+   takes a sample instead, a top tier by reach and a random tier; dependents that only
+   declare the dependency are counted but not selected;
 4. lists the library's API from its jar;
 5. builds the library from its release tag and runs its test suite with JaCoCo;
 6. matches coverage to each API, following overriding methods;
@@ -161,8 +161,10 @@ Every downloaded jar's SHA-256 and the analyzer's SHA-256 are kept in the run su
 
 - Dependents come from a snapshot of Maven Central (Goblin, 20 April 2025); releases after
   it have no dependents in the index.
-- Versions analyzed before the index had reach values (31 October 2026) selected all
-  dependents at random; each run's settings, including `top_target`, are in `runs`.
+- Versions analyzed before 9 November 2026 used a sample of up to 400 dependents that use
+  the library, and some before 31 October 2026 selected them all at random. Each run's
+  settings are in `runs`, and `dependents_tried` against `dependent_projects` in
+  `library_versions` shows whether every dependent was tried.
 - Test coverage needs a GitHub repository with a release tag and a Maven or Gradle build;
   `coverage_status` says why when there is none.
 

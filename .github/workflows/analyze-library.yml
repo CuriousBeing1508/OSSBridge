@@ -16,12 +16,12 @@ on:
         required: true
         type: string
       target:
-        description: "Dependents that use the library to select"
-        default: "400"
+        description: "Dependents that use the library to select. all tries every dependent, a number takes a faster sample"
+        default: "all"
         type: string
       top_target:
-        description: "How many of them in order of reach (the rest at random)"
-        default: "300"
+        description: "With a target, how many of them in order of reach (the rest at random). Empty takes all by reach"
+        default: ""
         type: string
       jdk:
         description: "Build the library with this JDK only (8, 11, 17 or 21); empty: try them from the oldest"
@@ -67,9 +67,14 @@ jobs:
           if ! [[ "$RELEASE" =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.+-]+$ ]]; then
             echo "Not a groupId:artifactId:version coordinate: $RELEASE"; exit 1
           fi
-          [[ "$TARGET" =~ ^[0-9]+$ && "$TOP_TARGET" =~ ^[0-9]+$ ]] || { echo "target and top_target must be numbers"; exit 1; }
+          [[ -z "$TARGET" || "$TARGET" == "all" || "$TARGET" =~ ^[0-9]+$ ]] || { echo "target must be all or a number"; exit 1; }
+          [[ -z "$TOP_TARGET" || "$TOP_TARGET" =~ ^[0-9]+$ ]] || { echo "top_target must be a number or empty"; exit 1; }
           [[ -z "$JDK" || "$JDK" =~ ^(8|11|17|21)$ ]] || { echo "jdk must be 8, 11, 17, 21 or empty"; exit 1; }
-          args="--target $TARGET --top-target $TOP_TARGET --timeout 2700"
+          args="--timeout 2700"
+          if [[ "$TARGET" =~ ^[0-9]+$ ]]; then
+            args="$args --target $TARGET"
+            [[ -n "$TOP_TARGET" ]] && args="$args --top-target $TOP_TARGET"
+          fi
           [[ -n "$JDK" ]] && args="$args --jdk $JDK"
           [[ "$SKIP_COVERAGE" == "true" ]] && args="$args --skip-coverage"
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')

@@ -45,6 +45,10 @@ TABLES = {
         ("api_coverage_pct", pa.float64()),
         ("instructions_missed", pa.int64()),    # whole library (JaCoCo report totals)
         ("instructions_covered", pa.int64()),
+        # Seconds the run took (run.json). Usage is steps 1 to 3, coverage is steps 4 to 6.
+        ("usage_seconds", pa.int64()),
+        ("coverage_seconds", pa.int64()),
+        ("analysis_seconds", pa.int64()),
     ]),
     # API of the library jar (step 4)
     "apis": pa.schema([

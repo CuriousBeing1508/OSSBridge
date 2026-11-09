@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Collection Loop: Steps 2 and 3 Until Enough Dependents Use the Library
+Collection Loop: Steps 2 and 3 for the Dependents of a Library Version
 ================================================================================
 
 Many declared dependents never call the library directly (they only pass it on
-to their own users), so a fixed list of dependents gives an unpredictable
-number of real users. This loop walks the ranked candidates (candidates.py) in
+to their own users). This loop walks the ranked candidates (candidates.py) in
 batches, downloads and analyzes each batch, and keeps the dependents that use
-the library, until it has enough:
+the library.
+
+By default every candidate is tried, so the results cover all known dependents
+of the version. A target turns this into a sample, which is faster:
 
     Tier A (top)     walk candidates by reach, highest first, until top_target
                      using dependents are selected
     Tier B (random)  walk the seeded random order, skipping dependents already
                      tried, until the total reaches target
 
-The loop stops when the target is reached, the candidates run out, or max_tried
-candidates have been tried. If fewer using dependents exist than the target, it
-keeps what it found and reports the shortfall.
+With a target, the loop stops when the target is reached, the candidates run
+out, or max_tried candidates have been tried. If fewer using dependents exist
+than the target, it keeps what it found and reports the shortfall.
 
 Jars are only needed while they are analyzed: jars of dependents that are not
 selected are deleted after each batch, and the selected ones at the end (unless
@@ -52,7 +54,8 @@ from .download_jars import download_library_jar, download_releases, sha256_of, w
 from .usage_analysis import SUMMARY_COLUMNS, USAGE_COLUMNS, analyze_usage, analyzer_jar, jars_using_library
 from .workspace import Workspace
 
-DEFAULTS = {"target": 400, "top_target": 300, "batch_size": 50, "max_tried": 3000}
+# None means no limit, so by default every candidate is tried.
+DEFAULTS = {"target": None, "top_target": None, "batch_size": 50, "max_tried": None}
 
 DEPENDENT_COLUMNS = ["release_id", "dependent_ga", "reach", "tier", "rank", "download_status",
                      "uses_library", "selected", "reason"]
@@ -62,6 +65,8 @@ ANALYZABLE = ("downloaded", "present")
 class Collection:
     def __init__(self, workspace, candidates, library_jar, params, workers, base_url, progress, keep_jars=False):
         self.keep_jars = keep_jars
+        # No max_tried means there is no limit, so the walk stops only when the candidates run out.
+        self.max_tried = float("inf") if params["max_tried"] is None else params["max_tried"]
         self.ws = workspace
         self.candidates = candidates
         self.library_jar = library_jar
@@ -79,7 +84,7 @@ class Collection:
         """Select up to quota using dependents of this tier; returns the stop reason."""
         remaining = sorted((c for c in self.candidates if c[rank_key] is not None), key=lambda c: c[rank_key])
         while self.selected[tier] < quota:
-            budget = self.p["max_tried"] - len(self.tried)
+            budget = self.max_tried - len(self.tried)
             if budget <= 0:
                 return "max_tried"
             batch = self.next_batch(remaining, min(self.p["batch_size"], budget))
@@ -131,7 +136,8 @@ class Collection:
 
         if self.progress:
             self.progress({"batch": self.batch_no, "tier": tier, "tried": len(self.tried),
-                           "selected": sum(self.selected.values()), "target": self.p["target"]})
+                           "candidates": len(self.candidates), "selected": sum(self.selected.values()),
+                           "target": self.p["target"] or "all"})
 
     def batch_files(self, n):
         self.ws.batches_dir.mkdir(parents=True, exist_ok=True)
@@ -166,7 +172,10 @@ class Collection:
         total_reach = sum(c["reach"] for c in self.candidates)
         selected_reach = sum(r["reach"] for r in selected)
         target = self.p["target"]
-        if len(selected) >= target:
+        if target is None:
+            message = (f"Tried all {len(records)} candidates. {len(selected)} of them use the library "
+                       f"and were selected.")
+        elif len(selected) >= target:
             message = f"Selected {len(selected)} dependents that use the library (target {target})."
         elif "max_tried" in self.stop_reasons.values():
             message = (f"Found {len(selected)} of {target} dependents that use the library: stopped after "
@@ -179,8 +188,9 @@ class Collection:
             "library": self.ws.library_ga,
             "version": self.ws.version,
             "message": message,
-            "target_reached": len(selected) >= target,
-            "shortfall": max(0, target - len(selected)),
+            # Without a target every candidate is tried, so there is nothing to reach.
+            "target_reached": None if target is None else len(selected) >= target,
+            "shortfall": None if target is None else max(0, target - len(selected)),
             "params": self.p,
             "candidates": len(self.candidates),
             "tried": len(records),
@@ -223,18 +233,26 @@ def collect_using_dependents(workspace, target=DEFAULTS["target"], top_target=DE
 
     progress(event) is called after each batch with tried/selected counts. Jars of
     dependents that are not selected are always deleted; keep_jars keeps the selected ones.
+    Without a target (the default) every candidate is tried and every one that uses the
+    library is selected.
     """
-    params = {"target": target, "top_target": min(top_target, target), "batch_size": batch_size,
-              "max_tried": max_tried}
     candidates = read_candidates(workspace.candidates_csv)
+    if target is None:
+        top_target = max_tried = None
+    elif top_target is not None:
+        top_target = min(top_target, target)
+    params = {"target": target, "top_target": top_target, "batch_size": batch_size, "max_tried": max_tried}
     library_jar = workspace.library_jar if workspace.library_jar.exists() else \
         download_library_jar(workspace, base_url)
     if workspace.batches_dir.exists():
         shutil.rmtree(workspace.batches_dir)
 
+    # No target is the same as a target of every candidate.
+    quota = len(candidates) if target is None else target
+    top_quota = quota if top_target is None else top_target
     c = Collection(workspace, candidates, library_jar, params, workers, base_url, progress, keep_jars)
-    c.stop_reasons["top"] = c.walk("A", "rank_reach", params["top_target"])
-    c.stop_reasons["random"] = c.walk("B", "rank_random", target - c.selected["A"])
+    c.stop_reasons["top"] = c.walk("A", "rank_reach", top_quota)
+    c.stop_reasons["random"] = c.walk("B", "rank_random", quota - c.selected["A"])
     records = c.write_outputs()
     summary = c.summary(records)
     workspace.collection_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
@@ -250,19 +268,21 @@ def main():
     parser = argparse.ArgumentParser(description="Download and analyze dependents until enough use the library")
     parser.add_argument("--library", required=True, help="groupId:artifactId")
     parser.add_argument("--version", required=True)
-    parser.add_argument("--target", type=int, default=DEFAULTS["target"], help="Using dependents to select")
+    parser.add_argument("--target", type=int, default=DEFAULTS["target"],
+                        help="Select only this many using dependents, as a faster sample (default: try all)")
     parser.add_argument("--top-target", type=int, default=DEFAULTS["top_target"],
-                        help="How many of them are taken in order of reach (the rest at random)")
+                        help="With --target, how many of them are taken in order of reach (default: all, "
+                             "the rest at random)")
     parser.add_argument("--batch-size", type=int, default=DEFAULTS["batch_size"])
     parser.add_argument("--max-tried", type=int, default=DEFAULTS["max_tried"],
-                        help="Stop after trying this many candidates")
+                        help="With --target, stop after trying this many candidates")
     parser.add_argument("--keep-jars", action="store_true",
                         help="Keep the jars of the selected dependents (others are always deleted)")
     args = parser.parse_args()
 
     def progress(e):
-        print(f"\r  batch {e['batch']} (tier {e['tier']}): tried {e['tried']}, "
-              f"selected {e['selected']}/{e['target']}   ", end="", flush=True)
+        print(f"\r  batch {e['batch']} (tier {e['tier']}): tried {e['tried']}/{e['candidates']}, "
+              f"selected {e['selected']} (target {e['target']})   ", end="", flush=True)
 
     ws = Workspace(args.library, args.version)
     if not ws.candidates_csv.exists():

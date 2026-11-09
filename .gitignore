@@ -6,6 +6,7 @@ ErrorLog/
 output/
 *.log
 analysis_log.txt
+.tmp/
 
 # Build artifacts
 target/

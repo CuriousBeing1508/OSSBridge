@@ -162,6 +162,19 @@ def test_reports_when_candidates_run_out(setup):
                                   "no more dependents of this version are known.")
 
 
+def test_tries_every_candidate_by_default(setup):
+    ws, repo = setup
+    events = []
+    summary = collect.collect_using_dependents(ws, batch_size=3, base_url=repo, progress=events.append)
+    assert summary["tried"] == 8                    # every candidate, no target and no max_tried
+    assert summary["selected"] == 6                 # every candidate that uses the library
+    assert (summary["selected_top"], summary["selected_random"]) == (4, 2)
+    assert summary["params"]["target"] is None and summary["params"]["max_tried"] is None
+    assert summary["target_reached"] is None and summary["shortfall"] is None
+    assert summary["message"] == "Tried all 8 candidates. 6 of them use the library and were selected."
+    assert events[-1]["target"] == "all" and events[-1]["candidates"] == 8
+
+
 def test_verify_reproduces_and_detects_changes(setup):
     ws, repo = setup
     collect.collect_using_dependents(ws, target=4, top_target=3, batch_size=2, base_url=repo)

@@ -16,10 +16,8 @@
 //                         rachna1508/ossbridge-results)
 //
 // Runs are found by their name, "Analyze <groupId:artifactId:version> [<request id>]"
-// (the workflow's run-name). When a run for a version without results succeeds,
-// the run has published the new results to the dataset, and the result tables are
-// reloaded. When RESULTS_PATH is a local folder, the version's published files are
-// first downloaded into it.
+// (the workflow's run-name). A run that succeeds has published its results to the dataset.
+// The backend then updates its tables right away instead of waiting for the next regular update.
 
 const crypto = require("crypto");
 const fs = require("fs");
@@ -47,7 +45,6 @@ const requested = new Map();   // release -> { requestId, at }
 const jobCache = new Map();    // run id -> { at, step }
 const loadAttempted = new Set();  // releases whose published results were loaded once
 let runCache = { at: 0, runs: null };
-let reloading = null;
 
 async function github(pathname, options = {}) {
   const response = await fetch(`https://api.github.com${pathname}`, {
@@ -124,7 +121,7 @@ async function downloadPublished(release) {
     const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
     if (response.status === 404) continue;
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-    const target = path.join(path.resolve(results.RESULTS_PATH), table, file);
+    const target = path.join(results.RESULTS_DIR, table, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(`${target}.part`, Buffer.from(await response.arrayBuffer()));
     fs.renameSync(`${target}.part`, target);
@@ -132,27 +129,23 @@ async function downloadPublished(release) {
   console.log(`[INFO] Downloaded the published results of ${release} into ${results.RESULTS_PATH}`);
 }
 
-/**
- * Loads the results of succeeded runs whose version has no results here yet; each
- * version is tried once (a run can succeed without publishing a version, e.g. when
- * the library has no usable dependents).
- */
+// Loads the results of a finished run whose version has no results here yet.
+// Each version is tried once, because a run can succeed without publishing any results.
 function reloadIfPublished(runs, analyzed) {
-  if (reloading) return;
+  if (results.isRefreshing()) return;
   const published = runs.filter((run) => run.conclusion === "success" && !analyzed(run.release)
     && !loadAttempted.has(run.release));
   if (published.length) {
     published.forEach((run) => loadAttempted.add(run.release));
-    console.log("[INFO] An analysis has finished; reloading the result tables");
+    console.log("[INFO] An analysis has finished. Loading its results.");
+    // A local results folder gets the published files first. Data from Hugging Face is copied by the update itself.
     const local = !results.RESULTS_PATH.includes("://");
-    reloading = (async () => {
+    (async () => {
       if (local) {
         for (const run of published) await downloadPublished(run.release);
       }
-      await results.reload();
-    })()
-      .catch((err) => console.error(`[ERROR] Loading the new results failed: ${err.message}`))
-      .finally(() => { reloading = null; });
+      await results.refresh();
+    })().catch((err) => console.error(`[ERROR] Loading the new results failed. ${err.message}`));
   }
 }
 
@@ -198,7 +191,7 @@ router.get("/status", async (req, res) => {
         versions[version] = { state: "requested", step: null, url: null, startedAt: new Date(request.at).toISOString() };
       }
     }
-    res.json({ library, reloading: Boolean(reloading), versions });
+    res.json({ library, reloading: results.isRefreshing(), versions });
   } catch (err) {
     res.status(502).json({ error: `Could not read the analysis runs. ${err.message}` });
   }

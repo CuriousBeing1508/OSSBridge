@@ -25,7 +25,8 @@ its results are ready. At most 3 analyses run at once, and at most 5 can start p
 
 - The list of dependent projects comes from a snapshot of Maven Central taken on
   20 April 2025. Versions released after that date are not listed.
-- Each analysis studies up to 400 dependent projects that actually call the library.
+- Each analysis tries every dependent project of the version and keeps the ones that
+  actually call the library. The version list shows how long each analysis took.
 - Test coverage is measured by building the library from its GitHub source and running
   its tests. This is not always possible, for example when the library does not link to
   a GitHub repository. The page then says why, and the usage results are still shown.

@@ -6,10 +6,18 @@ const dependencyRoutes = require("./routes/dependencyRoutes");
 const analysisRoutesV2 = require("./routes/analysisRoutesV2");
 const searchMethodRoutes = require('./routes/searchMethods');
 const analyzeRoutes = require("./routes/analyzeRoutes");
+const results = require("./results");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Until the data has loaded, data requests get a clear message instead of an error.
+// The Analyze settings need no data, so they always answer.
+app.use("/api", (req, res, next) => {
+  if (results.isLoaded() || req.path === "/analyze/config") return next();
+  res.status(503).json({ error: "The data is still loading. Please try again in a minute." });
+});
 
 app.use("/api/dependencies", dependencyRoutes);
 // app.use("/api/analysis", analysisRoutes);

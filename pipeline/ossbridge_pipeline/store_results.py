@@ -58,6 +58,23 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
+USAGE_STEPS = ("dependents", "collect")
+COVERAGE_STEPS = ("api", "coverage", "api_coverage")
+
+
+def step_seconds(run_json):
+    """(usage, coverage, total) seconds of the steps in run.json, or None when not recorded."""
+    steps = (read_json(run_json) or {}).get("steps", {})
+
+    def total(names):
+        seconds = [steps[n]["seconds"] for n in names if steps.get(n, {}).get("seconds") is not None]
+        return sum(seconds) if seconds else None
+
+    usage, coverage = total(USAGE_STEPS), total(COVERAGE_STEPS)
+    analysis = None if usage is None and coverage is None else (usage or 0) + (coverage or 0)
+    return usage, coverage, analysis
+
+
 def report_instructions(coverage_xml):
     """(missed, covered) instructions of the whole JaCoCo report, or (None, None)."""
     if not coverage_xml.exists():
@@ -162,6 +179,7 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         coverage_status, coverage_reason = "no_api_coverage", OUR_PROBLEM
         coverage_error = "step 6 (API coverage) wrote no api-coverage.csv; see run.json"
     instructions_missed, instructions_covered = report_instructions(ws.coverage_xml)
+    usage_seconds, coverage_seconds, analysis_seconds = step_seconds(ws.run_json)
     result_tables.write_table(results_dir, "library_versions", ga, v, [{
         "library_ga": ga, "version": v, "packages": jar_packages(ws.library_jar), "run_id": run_id,
         "dependent_projects": (collection or {}).get("candidates"),
@@ -176,6 +194,9 @@ def store(workspace, results_dir=DEFAULT_RESULTS):
         "api_coverage_pct": api_coverage_pct,
         "instructions_missed": instructions_missed,
         "instructions_covered": instructions_covered,
+        "usage_seconds": usage_seconds,
+        "coverage_seconds": coverage_seconds,
+        "analysis_seconds": analysis_seconds,
     }])
     written["library_versions"] = 1
     result_tables.write_run(results_dir, {

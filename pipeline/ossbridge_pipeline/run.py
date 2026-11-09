@@ -233,8 +233,9 @@ def step_table(r, index, target, top_target, max_tried, fetch_missing, skip_cove
     def collection():
         return collect.run(ws, target=target, top_target=top_target, max_tried=max_tried, keep_jars=keep_jars,
                            progress=lambda e: progress("collect", "progress",
-                                                       f"batch {e['batch']} (tier {e['tier']}): tried {e['tried']}, "
-                                                       f"selected {e['selected']}/{e['target']}"))
+                                                       f"batch {e['batch']} (tier {e['tier']}): tried "
+                                                       f"{e['tried']}/{e['candidates']}, selected {e['selected']} "
+                                                       f"(target {e['target']})"))
 
     def test_coverage():
         if skip_coverage:
@@ -311,10 +312,13 @@ def main():
     parser.add_argument("release", help="groupId:artifactId:version, e.g. org.mybatis:mybatis:3.5.16")
     parser.add_argument("--index", default=str(DEFAULT_INDEX), help="Dependents index directory or HTTPS URL")
     parser.add_argument("--target", type=int, default=collect.DEFAULTS["target"],
-                        help="Dependents that use the library to select")
+                        help="Select only this many dependents that use the library, as a faster sample "
+                             "(default: try every dependent)")
     parser.add_argument("--top-target", type=int, default=collect.DEFAULTS["top_target"],
-                        help="How many of them are taken in order of reach (the rest at random)")
-    parser.add_argument("--max-tried", type=int, default=collect.DEFAULTS["max_tried"])
+                        help="With --target, how many of them are taken in order of reach (default: all, "
+                             "the rest at random)")
+    parser.add_argument("--max-tried", type=int, default=collect.DEFAULTS["max_tried"],
+                        help="With --target, stop after trying this many candidates")
     parser.add_argument("--fetch-missing", action="store_true",
                         help="Add the library from Neo4j if it is not in the dependents index")
     parser.add_argument("--skip-coverage", action="store_true", help="Do not run the library's test suite")

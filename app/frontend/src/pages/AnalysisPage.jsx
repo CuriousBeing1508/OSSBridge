@@ -6,6 +6,20 @@ import { useLibrary } from "../context/LibraryContext";
 import InfoIcon, { DEPENDENTS_INFO } from "../components/InfoIcon";
 import { pageParam, pageUrl } from "../utils/pageUrl";
 
+const TIME_INFO = "How long it took to download and analyze the dependents and to run the library's tests. "
+  + "Analyzing a smaller sample of dependents is faster. To do that, start the Analyze library workflow "
+  + "on GitHub with a target.";
+
+// A run time in seconds as text, for example 45 seconds, 9 minutes or 1 hour 5 minutes.
+const duration = (seconds) => {
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${hours} ${hours === 1 ? "hour" : "hours"}${rest ? ` ${rest} ${rest === 1 ? "minute" : "minutes"}` : ""}`;
+};
+
 // Analysis run states (GitHub Actions run status, or "requested" before GitHub lists it)
 const ACTIVE_STATES = ["requested", "queued", "waiting", "pending", "in_progress"];
 const FAILED_STATES = ["failure", "cancelled", "timed_out", "startup_failure"];
@@ -311,6 +325,11 @@ const AnalysisPage = () => {
                           <span className="block text-xs mt-1">
                             {v.analyzedProjects.toLocaleString()} {v.analyzedProjects === 1 ? "dependent" : "dependents"} analyzed{" "}
                             <InfoIcon text={DEPENDENTS_INFO} />
+                          </span>
+                        )}
+                        {v.analysisSeconds != null && (
+                          <span className="block text-xs mt-1">
+                            Analysis took {duration(v.analysisSeconds)} <InfoIcon text={TIME_INFO} />
                           </span>
                         )}
                       </button>
