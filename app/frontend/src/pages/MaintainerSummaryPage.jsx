@@ -105,14 +105,6 @@ const NOT_MEASURABLE_INFO = "Some APIs have no code that a test could run. These
 const FULLY_COVERED_INFO = "Fully covered means the tests run every line of the method.";
 const API_INFO = "APIs are the public and protected methods and constructors that a dependent can use. Protected "
   + "ones count only in classes that are not final. Overloaded methods with the same name count as one API.";
-const UNUSED_INFO = "This does not mean they are unused or safe to remove. Projects outside Maven Central, "
-  + "applications that are not published, and code that calls the library through reflection or configuration "
-  + "files are not part of this analysis.";
-const CLASS_APIS_INFO = "How many APIs the class has.";
-const CLASS_COVERED_INFO = "How many of these APIs the library's own tests run.";
-const CLASS_NOT_COVERED_INFO = "How many of these APIs have code that no test runs.";
-const CLASS_DEPRECATED_INFO = "How many of these APIs are marked @Deprecated, either on the method itself or because "
-  + "the whole class is deprecated.";
 const INTENSITY_API_INFO = "Here an API is any class, method or field of the library that the project uses.";
 
 const COVERAGE_LABELS = {
@@ -545,68 +537,6 @@ const MaintainerSummaryPage = () => {
                     <p className="text-green-800 text-center font-semibold">{apiSurfaceData.message}</p>
                   </div>
 
-                  {apiSurfaceData.unusedSummary && apiSurfaceData.unusedSummary.total > 0 && !coverageUnavailable && (() => {
-                    const u = apiSurfaceData.unusedSummary;
-                    return (
-                      <div className="bg-white rounded-lg shadow p-6 space-y-5">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-700 mb-1">APIs that no analyzed project uses</h3>
-                          <p className="text-sm text-gray-700">
-                            {u.total.toLocaleString()} of the {apiSurfaceData.totalAvailableApis.toLocaleString()} APIs are not used
-                            by any of the {apiSurfaceData.totalDependentsAnalyzed.toLocaleString()} analyzed projects. They may be
-                            worth a review, for example when you plan deprecations or decide which tests matter
-                            less. <InfoIcon text={UNUSED_INFO} />
-                          </p>
-                        </div>
-                        <div>
-                          <Breakdown groups={[
-                            { label: "covered by tests", count: u.covered, bar: "bg-green-500", text: "text-green-700", info: COVERED_INFO },
-                            { label: "not covered by tests", count: u.notCovered, bar: "bg-red-500", text: "text-red-700" },
-                            { label: "no code to test", count: u.noCode, bar: "bg-gray-400", text: "text-gray-600", info: NOT_MEASURABLE_INFO },
-                          ]} />
-                          {u.deprecated > 0 && (
-                            <p className="text-sm text-gray-600 mt-2">
-                              {u.deprecated.toLocaleString()} of them are already deprecated.
-                            </p>
-                          )}
-                        </div>
-                        {u.topClasses.length > 0 && (
-                          <div>
-                            <h4 className="text-base font-semibold text-gray-700 mb-1">Classes that no analyzed project uses</h4>
-                            <p className="text-sm text-gray-600 mb-3">
-                              {u.classes.toLocaleString()} classes have no API that the analyzed projects use. The{" "}
-                              {u.topClasses.length} with the most APIs are shown.
-                            </p>
-                            <div className="overflow-x-auto">
-                              <table className="min-w-full text-sm">
-                                <thead className="bg-gray-50">
-                                  <tr>
-                                    <th className="px-4 py-2 text-left font-semibold text-gray-600">Class</th>
-                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">APIs <InfoIcon text={CLASS_APIS_INFO} /></th>
-                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Covered by tests <InfoIcon text={CLASS_COVERED_INFO} /></th>
-                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Not covered <InfoIcon text={CLASS_NOT_COVERED_INFO} /></th>
-                                    <th className="px-4 py-2 text-right font-semibold text-gray-600">Deprecated <InfoIcon text={CLASS_DEPRECATED_INFO} /></th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200">
-                                  {u.topClasses.map((c) => (
-                                    <tr key={c.name}>
-                                      <td className="px-4 py-2 font-mono text-xs text-gray-800 break-all">{c.name}</td>
-                                      <td className="px-4 py-2 text-right font-semibold text-gray-800">{c.apis.toLocaleString()}</td>
-                                      <td className="px-4 py-2 text-right text-green-700">{c.covered.toLocaleString()}</td>
-                                      <td className="px-4 py-2 text-right text-red-700">{c.notCovered.toLocaleString()}</td>
-                                      <td className="px-4 py-2 text-right text-gray-700">{c.deprecated.toLocaleString()}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
                 </>
               )}
 
@@ -633,7 +563,7 @@ const MaintainerSummaryPage = () => {
                         <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-lg border-2 border-blue-300 relative">
                           <div className="absolute top-3 right-3">
                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-200 text-blue-800">
-                              What's used and tested
+                              What's used and covered by test
                             </span>
                           </div>
                           <div className="text-sm text-blue-600 font-semibold mb-2">Usage-Based Coverage</div>
@@ -818,7 +748,7 @@ const MaintainerSummaryPage = () => {
                       <div className="bg-green-50 p-4 rounded-lg border border-green-200">
                         <div className="text-sm text-green-600 font-semibold mb-2">Fully Covered <InfoIcon text={FULLY_COVERED_INFO} /></div>
                         <div className="text-3xl font-bold text-green-600">{ctc.NPFullyCovered.toLocaleString()}</div>
-                        <div className="text-xs text-green-600 mt-1">Dependents use API methods that are fully covered and tested.</div>
+                        <div className="text-xs text-green-600 mt-1">Dependents use API methods that are fully covered by library's test suite.</div>
                       </div>
                       <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
                         <div className="text-sm text-yellow-600 font-semibold mb-2">Partially Covered</div>
@@ -872,9 +802,15 @@ const MaintainerSummaryPage = () => {
                 )}
                 {ctc && (
                   <TopTable
-                    title="Methods not covered at all, and how many projects use them"
+                    title="Methods that are not fully covered, and how many projects use them"
                     column="Method"
-                    rows={ctc.notCoveredMethods.map((m) => ({ name: m.signature, count: m.dependents }))}
+                    rows={(ctc.notFullyCoveredMethods || []).map((m) => ({ name: m.method, count: m.dependents, partly: m.partlyCovered }))}
+                    extra={{
+                      column: "Coverage",
+                      cell: (r) => r.partly
+                        ? <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Partially covered</span>
+                        : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Not covered</span>,
+                    }}
                   />
                 )}
               </MetricTab>

@@ -343,3 +343,4 @@ router.get("/compare", handle("compare", async (req, res) => {
 }));
 
 module.exports = router;
+module.exports.decodeDescriptor = decodeDescriptor;

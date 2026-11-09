@@ -6,44 +6,32 @@ The pipeline collects, for one version of a Java library on Maven Central:
 - its public API, and
 - how well its own test suite covers each API.
 
-The OSSBridge app shows these results. Viewing them needs only the app, which reads the
-published dataset. You need this pipeline only to analyze new library versions.
+The OSSBridge app shows these results. Viewing them needs only the app, which reads the published dataset. You need this pipeline only to analyze a new library or new versions of a library.
 
 There are three ways to run it:
-- the **Analyze** button in the app, which starts the GitHub Actions workflow,
-- the **Analyze library** workflow on GitHub Actions (see [Run on GitHub Actions](#run-on-github-actions)),
-- one command on your computer, directly or in the pipeline Docker image (below).
+- the **Analyze** button in the app (frontend), which starts the GitHub Actions workflow
+- the **Analyze library** workflow on GitHub Actions (see [Run on GitHub Actions](#run-on-github-actions))
+- one command on your computer, directly or in the pipeline Docker image (below)
 
 ## Overview
 
-The input is one library version, given as `group:artifact:version`. The pipeline has
-two independent branches whose results are combined at the end.
+The input is one library version, given as `group:artifact:version`. The pipeline has two independent branches whose results are combined at the end.
 
 The **usage branch** finds out how dependent projects use the library.
-1. **Dependents** lists every project that depends on the library version, using the
-   dependents index, and ranks them by reach and in a random order.
-2. **Download jars** downloads the jars of dependents from Maven Central.
-3. **API Usage analysis** runs the ASM bytecode analyzer on those jars to record which
-   library classes, methods and fields each dependent uses.
+- **Step 1. Select dependents** finds all projects that directly depend on the library version. We first select all dependent projects listed in the dependents index, which is built from the Goblin dump of Maven Central (see the [DependentsIndex README](DependentsIndex/README.md)). We then apply filtering. Projects that use the library only in their tests are left out, because test code is not in their published jar. Each project is counted once, using its latest release. Projects that do not name an exact version of the library are also left out, because we cannot tell which version they use.
+- **Step 2. Download jars** downloads the jars of dependents from Maven Central.
+- **Step 3. API Usage analysis** runs the ASM bytecode analyzer on those jars to record which library classes, methods and fields each dependent uses. If a dependent bundles a copy of the library inside its own jar, that copy is skipped, so only the dependent's own code is counted.
 
-Steps 2 and 3 run together in batches (the **collection loop**) until enough dependents
-that actually use the library have been found, because many declared dependents never
-call it directly.
+Steps 2 and 3 run together in batches (the **collection loop**) until enough dependents that actually use the library have been found, because many declared dependents never call it directly. By default enough means 400 such dependents. The first 300 are taken in order of reach, which is how many other projects depend on a dependent, similar to the "Used By" count on mvnrepository.com. The rest are taken in a random order, so that projects that nobody depends on are also included. The loop also stops when the candidates run out or after 3,000 candidates have been tried.
 
 The **API and coverage branch** describes the library itself:
-4. **Public API** lists the classes, methods, constructors and fields of the library jar
-   that dependents can use (public and protected), with deprecation.
-5. **Test coverage** builds the library from its source release and runs its test suite
-   with JaCoCo.
-6. **Match APIs with coverage** gives each API its coverage, also counting the library
-   methods that override it (what a call to the API actually runs).
+- **Step 4. Public API** lists the classes, methods, constructors and fields of the library jar that dependents can use (public and protected), with deprecation.
+- **Step 5. Test coverage** builds the library from its source release and runs its test suite with JaCoCo.
+- **Step 6. Match APIs with coverage** gives each API its coverage, also counting the library methods that override it (what a call to the API actually runs).
 
-Finally, **7. Store results** writes the outputs of both branches as Parquet result
-tables. The app reads these tables.
+Finally, **Step 7. Store results** writes the outputs of both branches as Parquet result tables. The app reads these tables.
 
-Because the branches do not depend on each other, a failure in one does not prevent
-results from the other. For example, when a library's tests do not build, the usage
-results are still stored and shown.
+We exclude versions of a library for which we do not find any direct dependents calling an API methods. We also keep usage and coverage branches independent. For example, when a library's tests do not build, the usage results are still stored and shown.
 
 ## Folder structure
 
@@ -92,8 +80,7 @@ python3 -m venv .venv
 cd pipeline/JavaUsageExtractor/asm-based-analysis && ./mvnw package
 ```
 
-Step 5 also needs `git`, Maven or Gradle, and the JDKs that libraries are built with.
-JDKs 17 and 21 cover most libraries. Older ones may need 8 or 11.
+Step 5 also needs `git`, Maven or Gradle, and the JDKs that libraries are built with. JDKs 17 and 21 cover most libraries. Older ones may need 8 or 11.
 
 The pipeline image has all of these. To use it instead of installing them:
 
@@ -126,31 +113,22 @@ Run ok: .../data/runs/org.mybatis__mybatis@3.5.16/run.json
   API coverage: 85.1% of 5665 APIs
 ```
 
-- **Failures:** a failed step does not stop the run. The other branch still runs, steps that
-  need its output are skipped, and step 7 stores what there is.
+- **Failures:** a failed step does not stop the run. The other branch still runs, steps that need its output are skipped, and step 7 stores what there is.
 - **Step statuses:** `ok`, `failed`, `skipped` or `unavailable`. Test coverage is
-  `unavailable` when the library itself does not allow it, for example when it has no
-  release tag on GitHub or is not built with Maven or Gradle. This is not a failure. The
-  app then shows the usage results with a plain reason and the build error. Steps that
-  need coverage are unavailable for the same reason.
-- **Run status:** `ok` (every step ok or unavailable), `partial` (results stored, some
-  steps failed or skipped) or `failed` (nothing stored). The exit code is 0 when the
-  results were stored.
-- **run.json** in the run folder has each step's status, duration, summary and, if it
-  failed, the reason. It is updated while the run goes on.
+  `unavailable` when the library itself does not allow it, for example when it has no release tag on GitHub or is not built with Maven or Gradle. This is not a failure. The app then shows the usage results with a plain reason and the build error. Steps that need coverage are unavailable for the same reason.
+- **Run status:** `ok` (every step ok or unavailable), `partial` (results stored, some steps failed or skipped) or `failed` (nothing stored). The exit code is 0 when the results were stored.
+- **run.json** in the run folder has each step's status, duration, summary and, if it failed, the reason. It is updated while the run goes on.
 - **Options:** `--target`, `--top-target`, `--max-tried` (collection loop),
   `--fetch-missing` (add the library from Neo4j if it is not in the dependents index),
-  `--skip-coverage`, `--jdk` (build the library with this JDK only), `--timeout` (test
-  suite), `--keep-jars`, `--index`, `--results`.
+  `--skip-coverage`, `--jdk` (build the library with this JDK only), `--timeout` (test suite), `--keep-jars`, `--index`, `--results`.
 
 From Python: `run.run_pipeline(library_ga, version, progress=...)`.
 
 ## Steps
 
-Each step can also be run on its own. Examples use commons-codec 1.17.1. Paths are
-relative to `pipeline/` unless noted.
+Each step can also be run on its own. Examples use commons-codec 1.17.1. Paths are relative to `pipeline/` unless noted.
 
-### 1. Dependents
+### 1. Select dependents
 List every project that depends on the library version and rank them.
 See [DependentsIndex/README.md](DependentsIndex/README.md).
 

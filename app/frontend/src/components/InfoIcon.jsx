@@ -1,9 +1,10 @@
 import React, { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const WIDTH = 288;
 
 // Shows a small info sign that explains a term on hover, focus or tap.
-// The explanation is placed on the screen itself, so tables that scroll do not cut it off.
+// The explanation is drawn at the top level of the page, so cards and tables that scroll or grow do not cut it off.
 const InfoIcon = ({ text }) => {
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
@@ -29,12 +30,13 @@ const InfoIcon = ({ text }) => {
       onBlur={hide}
       onClick={(e) => {
         e.stopPropagation();
+        e.preventDefault();
         if (pos) hide(); else show();
       }}
       className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-xs font-bold leading-none align-middle cursor-help select-none normal-case hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
     >
       i
-      {pos && (
+      {pos && createPortal(
         <span
           role="tooltip"
           style={{
@@ -47,7 +49,8 @@ const InfoIcon = ({ text }) => {
           className="z-50 rounded-md bg-gray-900 px-3 py-2 text-xs font-normal leading-snug text-left text-white shadow-lg whitespace-normal normal-case tracking-normal pointer-events-none"
         >
           {text}
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );
