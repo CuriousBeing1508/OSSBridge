@@ -105,6 +105,8 @@ const NOT_MEASURABLE_INFO = "Some APIs have no code that a test could run. These
 const FULLY_COVERED_INFO = "Fully covered means the tests run every line of the method.";
 const API_INFO = "APIs are the public and protected methods and constructors that a dependent can use. Protected "
   + "ones count only in classes that are not final. Overloaded methods with the same name count as one API.";
+const PRIORITY_INFO = "Each row is a method name, so overloads with the same name are counted together. The tests "
+  + "run none of the overloads that dependents use. Overloads that no dependent uses may still be covered.";
 const INTENSITY_API_INFO = "Here an API is any class, method or field of the library that the project uses.";
 
 const COVERAGE_LABELS = {
@@ -326,7 +328,6 @@ const MaintainerSummaryPage = () => {
             ["api-surface", "API Surface Usage"],
             ["usage-based-coverage", "Usage-Based API Test Coverage"],
             ["community-test-coverage", "Community Test Coverage"],
-            ["intensity", "Usage Intensity"],
             ["overview", "What dependents use"],
           ];
           const coverageUnavailable = data.testCoverage && !data.testCoverage.available;
@@ -354,7 +355,7 @@ const MaintainerSummaryPage = () => {
               <MetricTab
                 title="What dependents use"
                 question="What does this show?"
-                definition="Shows which packages, classes and methods of the library dependent projects use, and how many projects use each."
+                definition="Shows which packages, classes and methods of the library dependent projects use, how many projects use each, and how much of the library each project uses."
                 basis={basis}
                 headline={(
                   <Headline
@@ -389,6 +390,59 @@ const MaintainerSummaryPage = () => {
                   } : null}
                 />
 
+                {intensityData && (() => {
+                  const heavy = intensityData.distribution["Very Heavy (200+ APIs)"] || 0;
+                  const leader = intensityData.topHeavyUsers[0];
+                  const cards = [
+                    { label: "Mean", value: intensityData.stats.mean, border: "border-blue-500", text: "text-blue-600", note: "APIs per dependent" },
+                    { label: "Median", value: intensityData.stats.median, border: "border-green-500", text: "text-green-600", note: "APIs per dependent" },
+                    { label: "Max", value: intensityData.stats.max, border: "border-orange-500", text: "text-orange-600", note: "Most APIs used" },
+                    { label: "Min", value: intensityData.stats.min, border: "border-purple-500", text: "text-purple-600", note: "Least APIs used" },
+                  ];
+                  return (
+                    <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                      <div>
+                        <h3 className="text-lg font-semibold mb-1 text-gray-700">Usage Intensity</h3>
+                        <p className="text-sm text-gray-600">
+                          Usage intensity is the number of different APIs of the library that a dependent project uses. A
+                          project with a high usage intensity depends on more of the library, so changes to the API are
+                          more likely to affect it.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        {cards.map((c) => (
+                          <div key={c.label} className={`bg-white p-6 rounded-lg shadow border-l-4 ${c.border}`}>
+                            <h4 className="text-sm font-semibold text-gray-600 mb-2">{c.label}</h4>
+                            <p className={`text-3xl font-bold ${c.text}`}>{c.value}</p>
+                            <p className="text-xs text-gray-500 mt-1">{c.note}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-base text-gray-800">
+                        Half of the projects use {intensityData.stats.median.toLocaleString()} APIs or
+                        fewer. <InfoIcon text={INTENSITY_API_INFO} />
+                        {heavy > 0 && leader && (
+                          <> {heavy.toLocaleString()} {heavy === 1 ? "project uses" : "projects use"} more than 200,
+                            led by <span className="font-mono">{leader.jarFile}</span> ({leader.usageCount.toLocaleString()} APIs).</>
+                        )}
+                      </p>
+                      <div>
+                        <h4 className="text-base font-semibold mb-1 text-gray-700">Usage Intensity Distribution</h4>
+                        <p className="text-sm text-gray-600 mb-4">How many APIs do dependents typically use?</p>
+                        <ResponsiveContainer width="100%" height={400}>
+                          <BarChart data={Object.entries(intensityData.distribution).map(([name, value]) => ({ name, value }))}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="name" angle={-15} textAnchor="end" height={80} />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="value" fill="#8B5CF6" name="Dependents" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {allDependents.length > 0 && (
                   <div className="bg-white rounded-lg shadow p-6">
                     <h3 className="text-lg font-semibold mb-1 text-gray-700">All dependents</h3>
@@ -398,7 +452,7 @@ const MaintainerSummaryPage = () => {
                         <thead className="bg-gray-50 sticky top-0">
                           <tr>
                             <th className="px-4 py-2 text-left font-semibold text-gray-600">Dependent</th>
-                            <th className="px-4 py-2 text-right font-semibold text-gray-600">APIs used</th>
+                            <th className="px-4 py-2 text-right font-semibold text-gray-600">APIs used <InfoIcon text={INTENSITY_API_INFO} /></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -638,22 +692,18 @@ const MaintainerSummaryPage = () => {
                           <div className="bg-red-50 px-6 py-4 border-b border-red-200">
                             <div className="flex items-center justify-between">
                               <h3 className="text-lg font-semibold text-red-800">
-                                Priority. Consider adding tests for these API methods
+                                Priority. Consider adding tests for these API methods <InfoIcon text={PRIORITY_INFO} />
                               </h3>
                               <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-200 text-red-800">
                                 Action Required
                               </span>
                             </div>
                             <p className="text-sm text-red-700 mt-2">
-                              These API methods are actively used by dependents but have <strong>zero test coverage</strong>.
-                              Adding tests here will have the highest impact on dependent stability.
+                              {t.notCoveredByTests > t.topUncoveredAPIs.length
+                                ? `Top ${t.topUncoveredAPIs.length} of ${t.notCoveredByTests.toLocaleString()} methods, sorted by number of dependent projects.`
+                                : "Sorted by number of dependent projects."}{" "}
+                              Dependents use these methods, but no test runs them.
                             </p>
-                            {t.notCoveredByTests > t.topUncoveredAPIs.length && (
-                              <p className="text-sm text-red-700 mt-1">
-                                The {t.topUncoveredAPIs.length} methods used by the most projects are shown, out
-                                of {t.notCoveredByTests.toLocaleString()} that are not covered.
-                              </p>
-                            )}
                           </div>
                           <div className="p-6">
                             <div className="bg-gray-50 rounded max-h-96 overflow-y-auto">
@@ -817,66 +867,6 @@ const MaintainerSummaryPage = () => {
             );
           })()}
 
-          {activeTab === "intensity" && intensityData && (() => {
-            const heavy = intensityData.distribution["Very Heavy (200+ APIs)"] || 0;
-            const leader = intensityData.topHeavyUsers[0];
-            const cards = [
-              { label: "Mean", value: intensityData.stats.mean, border: "border-blue-500", text: "text-blue-600", note: "APIs per dependent" },
-              { label: "Median", value: intensityData.stats.median, border: "border-green-500", text: "text-green-600", note: "APIs per dependent" },
-              { label: "Max", value: intensityData.stats.max, border: "border-orange-500", text: "text-orange-600", note: "Most APIs used" },
-              { label: "Min", value: intensityData.stats.min, border: "border-purple-500", text: "text-purple-600", note: "Least APIs used" },
-            ];
-            return (
-              <MetricTab
-                title="Usage Intensity"
-                question="What is Usage Intensity?"
-                definition="Usage intensity is the number of different APIs of the library that a dependent project uses. A project with a high usage intensity depends on more of the library, so changes to the API are more likely to affect it."
-                basis={basis}
-              >
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  {cards.map((c) => (
-                    <div key={c.label} className={`bg-white p-6 rounded-lg shadow border-l-4 ${c.border}`}>
-                      <h2 className="text-sm font-semibold text-gray-600 mb-2">{c.label}</h2>
-                      <p className={`text-3xl font-bold ${c.text}`}>{c.value}</p>
-                      <p className="text-xs text-gray-500 mt-1">{c.note}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="bg-white p-6 rounded-lg shadow">
-                  <p className="text-base text-gray-800">
-                    Half of the projects use {intensityData.stats.median.toLocaleString()} APIs or
-                    fewer. <InfoIcon text={INTENSITY_API_INFO} />
-                    {heavy > 0 && leader && (
-                      <> {heavy.toLocaleString()} {heavy === 1 ? "project uses" : "projects use"} more than 200,
-                        led by <span className="font-mono">{leader.jarFile}</span> ({leader.usageCount.toLocaleString()} APIs).</>
-                    )}
-                  </p>
-                </div>
-
-                <div className="bg-white p-6 rounded-lg shadow">
-                  <h3 className="text-lg font-semibold mb-4 text-gray-700">Usage Intensity Distribution</h3>
-                  <p className="text-sm text-gray-600 mb-4">How many APIs do dependents typically use?</p>
-                  <ResponsiveContainer width="100%" height={400}>
-                    <BarChart data={Object.entries(intensityData.distribution).map(([name, value]) => ({ name, value }))}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" angle={-15} textAnchor="end" height={80} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#8B5CF6" name="Dependents" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <TopTable
-                  title="Top 10 Heavy Users"
-                  column="Dependent"
-                  countColumn="APIs used"
-                  rows={intensityData.topHeavyUsers.map((u) => ({ name: u.jarFile, count: u.usageCount }))}
-                />
-              </MetricTab>
-            );
-          })()}
 
           </>
           );
