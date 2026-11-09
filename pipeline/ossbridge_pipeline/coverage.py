@@ -739,10 +739,10 @@ def measure_coverage(workspace, repo=None, tag=None, timeout=DEFAULT_TIMEOUT, ke
                     summary["log"] = log_file.name
                     summary["disabled_profiles"] = list(disabled)
                     break
-                reason = first_error(log_file) or "no tests ran"
-                summary["attempts"].append({"jdk": jdk, "disabled_profiles": list(disabled), "reason": reason,
+                failure = first_error(log_file) or "no tests ran"
+                summary["attempts"].append({"jdk": jdk, "disabled_profiles": list(disabled), "reason": failure,
                                             "log": log_file.name})
-                progress("jdk", f"JDK {jdk} failed: {reason}")
+                progress("jdk", f"JDK {jdk} failed: {failure}")
             if summary["jdk"] is not None:
                 break
         else:

@@ -1,3 +1,4 @@
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -266,3 +267,20 @@ def test_build_commands_can_disable_profiles(tmp_path, monkeypatch):
     monkeypatch.setattr(coverage.shutil, "which", lambda name: "/usr/bin/mvn")
     steps, _, _ = coverage.build_commands("maven", tmp_path, tmp_path, 8, disabled_profiles=("java14+", "jdk9"))
     assert "-P!java14+,!jdk9" in steps[0][0]
+
+
+def test_a_library_without_a_repository_gets_a_plain_reason(tmp_path, monkeypatch):
+    # dom4j 1.6.1 has no GitHub repository in its POM. This once crashed instead of saying so.
+    from ossbridge_pipeline.workspace import Workspace
+    ws = Workspace("dom4j:dom4j", "1.6.1", root=tmp_path / "runs")
+    ws.library_jar.parent.mkdir(parents=True, exist_ok=True)
+    ws.library_jar.write_bytes(b"jar")
+
+    def no_repository(*args, **kwargs):
+        raise coverage.CoverageError("no_repository", "no GitHub repository in the POM")
+    monkeypatch.setattr(coverage, "resolve_source", no_repository)
+
+    summary = coverage.measure_coverage(ws)
+    assert summary["status"] == "no_repository"
+    assert summary["reason"].startswith("The library's POM on Maven Central does not link to a GitHub")
+    assert json.loads(ws.coverage_json.read_text())["status"] == "no_repository"

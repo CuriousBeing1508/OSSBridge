@@ -56,8 +56,9 @@ const InfoIcon = ({ text }) => {
   );
 };
 
-export const DEPENDENTS_INFO = "Dependents are projects on Maven Central that use this version of the library "
-  + "directly in their codebase. Projects that use it only in their tests, never call it, or have no jar "
-  + "we can analyze are left out.";
+export const USED_BY_INFO = "These projects list this version as a dependency. Test dependencies are not counted.";
+
+export const DEPENDENTS_INFO = "We checked the code of every project that lists this version. Only these projects "
+  + "call the library. The others list it but never call it, or their code is not on Maven Central.";
 
 export default InfoIcon;
