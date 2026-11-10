@@ -1,7 +1,5 @@
-# Hugging Face Space: the frontend and backend in one container on port 7860,
-# reading the published result tables and dependents index summaries from the
-# Hugging Face dataset.
-# Local use with separate containers is docker-compose.yml.
+# The frontend and backend in one container.
+# Hugging Face Spaces and docker-compose.yml both use it.
 
 FROM node:22-bookworm-slim AS frontend
 WORKDIR /frontend

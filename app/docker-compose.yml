@@ -1,43 +1,22 @@
-version: '3.8'
-
 services:
-  backend:
+  ossbridge:
+    # The same image as the Hugging Face Space. The backend also serves the frontend.
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
-    container_name: ossbridge-backend
+    container_name: ossbridge
     ports:
-      - "5050:5050"
+      - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - PORT=5050
+      - PORT=3000
       - RESULTS_PATH=${RESULTS_PATH:-/data/results}
       - INDEX_PATH=${INDEX_PATH:-/data/dependents-index}
       - SYNC_MINUTES=${SYNC_MINUTES:-5}
       - DUCKDB_MEMORY_LIMIT=${DUCKDB_MEMORY_LIMIT:-1GB}
-      # Optional: lets the app start analyses on GitHub Actions (export it in the shell)
+      # Optional. It lets the app start analyses on GitHub Actions.
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     volumes:
-      # Writable: results of analyses started from the app are downloaded into it
+      # Writable. Results of analyses started from the app are downloaded into it.
       - ${RESULTS_DIR:-../data/results}:/data/results
       - ${INDEX_DIR:-../data/dependents-index}:/data/dependents-index:ro
     restart: unless-stopped
-    networks:
-      - ossbridge-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: ossbridge-frontend
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - ossbridge-network
-
-networks:
-  ossbridge-network:
-    driver: bridge

@@ -40,8 +40,8 @@ docker compose up -d --build
 ```
 
 Open http://localhost:3000. The first start takes a few minutes, and loading the data
-takes up to a minute more. Run `docker compose logs -f backend` and wait for
-`OSSBridge backend running on http://localhost:5050`.
+takes up to a minute more. Run `docker compose logs -f ossbridge` and wait for
+`OSSBridge backend running on http://localhost:3000`.
 
 The app reads the published dataset from Hugging Face by default, so you need no download.
 
@@ -95,8 +95,8 @@ At most 3 analyses run at once, and at most 5 can start per hour.
 |---|---|
 | The backend stops with "Could not load the result tables" | The data paths in `app/.env`, or your internet connection |
 | Only analyzed versions are listed | The dependents index setting (`INDEX_PATH` or `INDEX_DIR`) in `app/.env` |
-| A port is in use | Another program uses port 3000 or 5050. Stop it, or change the ports in `app/docker-compose.yml` |
-| No Analyze buttons | http://localhost:5050/api/analyze/config should say `"enabled": true`. If not, the token is missing |
+| A port is in use | Another program uses port 3000. Stop it, or change the port in `app/docker-compose.yml` |
+| No Analyze buttons | http://localhost:3000/api/analyze/config should say `"enabled": true`. If not, the token is missing |
 | "GitHub API 401" | The token is wrong or has expired. Create a new one |
 | "GitHub API 403" or "404" | The token cannot reach this repository, or lacks **Actions: Read and write** |
 | The page looks out of date | Reload it with Cmd+Shift+R (Ctrl+Shift+R on Windows and Linux) |

@@ -27,17 +27,16 @@ if not exist .env (
 
 REM Start containers
 echo Starting OSSBridge...
-echo    Backend: http://localhost:5050
-echo    Frontend: http://localhost:3000
+echo    OSSBridge: http://localhost:3000
 echo.
 echo Press Ctrl+C to stop
 echo ======================================================================
 echo.
 
-docker-compose up
+docker compose up
 
 echo.
 echo ======================================================================
-echo   To stop completely, run: docker-compose down
+echo   To stop completely, run: docker compose down
 echo ======================================================================
 pause
