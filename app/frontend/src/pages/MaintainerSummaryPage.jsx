@@ -785,7 +785,7 @@ const MaintainerSummaryPage = () => {
                       <p className="text-sm text-purple-700 italic">
                         {ctc.NPFullyCovered.toLocaleString()} of {ctc.NPtotal.toLocaleString()} projects use only API methods
                         that are fully covered by the library's tests. The
-                        other {(ctc.NPtotal - ctc.NPFullyCovered).toLocaleString()} use at least one method that is not
+                        other {(ctc.NPtotal - ctc.NPFullyCovered).toLocaleString()} use at least one API that is not
                         fully covered.
                       </p>
                     </div>

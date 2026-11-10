@@ -411,7 +411,8 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
  * http://localhost:5050/api/analysisV2/community-test-coverage?library=jackson-databind&version=2.17.2
  * Community Test Coverage (CTC) is the share of dependents whose used API methods are all
  * fully covered by the library's tests. A method is fully covered when the tests run every
- * line of it. Dependents that use no method with code are left out.
+ * line of it. Every analyzed dependent is counted. A dependent that uses only annotations, classes
+ * or fields calls no tested method, so it counts as not fully covered.
  */
 router.get("/community-test-coverage", handle("community-test-coverage", async (req, res) => {
   const lv = await results.libraryVersion(req, res);
@@ -430,12 +431,15 @@ router.get("/community-test-coverage", handle("community-test-coverage", async (
       AND m.status IN ('covered', 'covered_by_override', 'not_covered')
     GROUP BY u.dependent, m.signature`, params);
 
-  const fullyCovered = new Map();
-  const perProject = new Map();
+  // Every analyzed dependent is counted. One that calls no method with code is not fully covered.
+  const dependents = await results.query(`
+    SELECT DISTINCT dependent FROM uses WHERE library_ga = $ga AND version = $version`, params);
+  const fullyCovered = new Map(dependents.map((d) => [d.dependent, false]));
+  const perProject = new Map(dependents.map((d) => [d.dependent, { methods: 0, fully: 0, covered: 0 }]));
   const methods = new Map();
   for (const r of rows) {
-    fullyCovered.set(r.dependent, (fullyCovered.get(r.dependent) ?? true) && r.fully_covered);
     const p = perProject.get(r.dependent) || { methods: 0, fully: 0, covered: 0 };
+    fullyCovered.set(r.dependent, (p.methods === 0 || fullyCovered.get(r.dependent)) && r.fully_covered);
     p.methods += 1;
     p.fully += r.fully_covered ? 1 : 0;
     p.covered += r.any_covered ? 1 : 0;
@@ -455,7 +459,7 @@ router.get("/community-test-coverage", handle("community-test-coverage", async (
   const partiallyCovered = projects.filter((p) => p.fully < p.methods && p.covered > 0).length;
   const notCoveredProjects = projects.filter((p) => p.covered === 0).length;
   const averageProjectCoverage = projects.length
-    ? round2(projects.reduce((sum, p) => sum + (100 * p.fully) / p.methods, 0) / projects.length) : 0;
+    ? round2(projects.reduce((sum, p) => sum + (p.methods ? (100 * p.fully) / p.methods : 0), 0) / projects.length) : 0;
   const notCovered = all.filter((m) => !m.anyCovered);
 
   // Each used overload that is not fully covered, with its parameters, so the list names one exact method.
