@@ -657,11 +657,6 @@ const MaintainerSummaryPage = () => {
                         <h3 className={`text-sm font-medium ${lower ? "text-yellow-800" : "text-green-800"}`}>
                           {t.summary.interpretation}
                         </h3>
-                        <div className={`mt-2 text-sm ${lower ? "text-yellow-700" : "text-green-700"}`}>
-                          <p>{t.summary.mainMessage}</p>
-                          <p className="mt-1">{t.summary.comparisonMessage}</p>
-                        </div>
-                        {t.summary.note && <p className="mt-2 text-xs text-gray-600 italic">{t.summary.note}</p>}
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">

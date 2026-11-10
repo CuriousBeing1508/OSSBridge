@@ -342,14 +342,20 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
   const potentialProjectCoverage = known ? pct(project.covered + uncoveredInstructions, project.total) : null;
   const projectCoverageGain = known ? round2(potentialProjectCoverage - project.pct) : null;
 
+  // One sentence that compares the two coverages and counts the used API methods without tests.
   const diff = known ? usageBasedCoverage - project.pct : null;
-  const interpretation = !known
-    ? "Overall project coverage is not recorded for this version."
-    : Math.abs(diff) < 1
-      ? "Used APIs have similar coverage to the overall project. They are well balanced."
-      : diff < 0
-        ? "Used APIs have lower coverage than the overall project. You could prioritize testing them."
-        : "Used APIs have better coverage than the overall project. Great job!";
+  const n = notCovered.length;
+  const untested = `${n.toLocaleString("en-US")} used API ${n === 1 ? "method is" : "methods are"}`;
+  const points = known ? Math.abs(diff).toFixed(1) : null;
+  const interpretation = n === 0
+    ? "Every used API method is covered by at least one test."
+    : !known
+      ? `${untested} not covered by any test.`
+      : Math.abs(diff) < 1
+        ? `Used API methods have about the same coverage as the overall project. However, ${untested} still not covered by any test.`
+        : diff < 0
+          ? `Used API methods have ${points} percentage points lower coverage than the overall project. ${untested.charAt(0).toUpperCase() + untested.slice(1)} not covered by any test.`
+          : `Used API methods have ${points} percentage points higher coverage than the overall project. However, ${untested} still not covered by any test.`;
 
   res.json({
     library: req.query.library,
@@ -366,12 +372,7 @@ router.get("/used-api-test-coverage", handle("used-api-test-coverage", async (re
 
     summary: {
       totalDependents: dependents,
-      mainMessage: `Tests run ${covered.length.toLocaleString("en-US")} of the ${usedApisWithCode.toLocaleString("en-US")} used APIs that have code (${Math.round(usageBasedCoverage)}%).`,
-      comparisonMessage: known
-        ? `Overall project test coverage is ${project.pct}%`
-        : "Overall project test coverage is not recorded for this version",
       interpretation,
-      note: `Out of ${totalUsedApis} APIs used by ${dependents} dependents, ${covered.length} are covered fully or partially by tests`,
     },
 
     impact: {
