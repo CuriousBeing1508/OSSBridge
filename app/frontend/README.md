@@ -1,70 +1,56 @@
-# Getting Started with Create React App
+# OSSBridge Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+The React app that shows the OSSBridge results. It reads them from the backend in `../backend`.
 
-## Available Scripts
+## Run the app
 
-In the project directory, you can run:
+The frontend and backend run together in one Docker container. The backend serves the built frontend. Run these commands from `app/`.
 
-### `npm start`
+Create the settings file once. See "Run the app on your computer" in the [main README](../../README.md) for what goes in it.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+```bash
+cp .env.example .env
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+Start the app.
 
-### `npm test`
+```bash
+docker compose up -d --build
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Open http://localhost:3000. The data takes up to a minute to load. To follow it, run `docker compose logs -f ossbridge` and wait for `OSSBridge backend running on http://localhost:3000`.
 
-### `npm run build`
+Stop the app.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```bash
+docker compose down
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+After changing code, run `docker compose up -d --build` again. After changing only `.env`, `docker compose up -d` is enough.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Run the frontend and backend separately
 
-### `npm run eject`
+Use this when you change the frontend and want it to reload on each save.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Start the backend. It listens on port 5050 and reads the data from `data/results/` and `data/dependents-index/` at the repository root. To read the published dataset instead, set `RESULTS_PATH` and `INDEX_PATH` in `app/backend/.env` as in `app/.env.example`.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```bash
+cd app/backend && npm install && node server.js
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+Then start the frontend. It opens on http://localhost:3000.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+```bash
+cd app/frontend && npm install && npm start
+```
 
-## Learn More
+The frontend calls the backend at `http://localhost:5050`. Set `REACT_APP_API_URL` to use another address.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Folders
 
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+| Folder | Contents |
+|---|---|
+| `src/pages/` | One file per page: home, analysis, maintainer summary, dependent detail and about |
+| `src/components/` | Shared parts such as the header, search box and version selector |
+| `src/services/api.js` | All calls to the backend |
+| `src/context/` | The selected library and version, shared between pages |
