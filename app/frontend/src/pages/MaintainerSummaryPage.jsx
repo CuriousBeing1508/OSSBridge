@@ -535,7 +535,7 @@ const MaintainerSummaryPage = () => {
                           <Pie
                             data={pieSlices([
                               { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
-                              { name: "Not used by these projects", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
+                              { name: "Not Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
                             ])}
                             dataKey="value"
                             nameKey="name"
@@ -546,7 +546,7 @@ const MaintainerSummaryPage = () => {
                           >
                             {pieSlices([
                               { name: "Used by Dependents", value: apiSurfaceData.totalUsedApis, color: "#10B981" },
-                              { name: "Not used by these projects", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
+                              { name: "Not Used", value: apiSurfaceData.totalUnusedApis, color: "#EF4444" },
                             ]).map((slice) => <Cell key={slice.name} fill={slice.color} />)}
                           </Pie>
                           <Tooltip />
