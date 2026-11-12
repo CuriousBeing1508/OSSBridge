@@ -4,6 +4,7 @@ import { getLibraryVersions, getAnalyzeConfig, getAnalyzeStatus, startAnalysis }
 import Header from "../components/Header";
 import { useLibrary } from "../context/LibraryContext";
 import InfoIcon from "../components/InfoIcon";
+import FewDependentsBadge from "../components/FewDependentsBadge";
 import { pageParam, pageUrl } from "../utils/pageUrl";
 
 // The tooltip of an analyzed version. It tells how many projects list it and how many call it.
@@ -26,7 +27,21 @@ const duration = (seconds) => {
 const ACTIVE_STATES = ["requested", "queued", "waiting", "pending", "in_progress"];
 const FAILED_STATES = ["failure", "cancelled", "timed_out", "startup_failure"];
 const POLL_MS = 20000;
+// Versions grouped by how many projects use them, compared with the other versions of the library
+const USAGE_GROUPS = [
+  ["most", "Most used versions"],
+  ["moderate", "Moderately used versions"],
+  ["rare", "Rarely used versions"],
+];
 const REQUEST_VISIBLE_MS = 3 * 60 * 1000;
+// How long a finished run is followed until the backend has loaded its results
+const LOAD_WAIT_MS = 10 * 60 * 1000;
+// Failed status requests in a row before the page stops asking
+const MAX_POLL_FAILURES = 5;
+
+// A run that succeeded but whose results the backend has not loaded yet
+const waitingForResults = (run) => run.state === "success" && run.loaded === false
+  && Date.now() - Date.parse(run.updatedAt) < LOAD_WAIT_MS;
 
 // "2025-04-20" as "20 April 2025"
 const longDate = (date) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB",
@@ -63,6 +78,8 @@ const AnalysisPage = () => {
   // [{ version, dependents, analyzed, inIndex }], newest first
   const [versions, setVersions] = useState([]);
   const [snapshot, setSnapshot] = useState(null);
+  const [libraryInfo, setLibraryInfo] = useState(null);
+  const [sortBy, setSortBy] = useState("use");
   // Releases on Maven Central that are not listed (not in the dependents index)
   const [notListed, setNotListed] = useState(0);
   const [showAll, setShowAll] = useState(true);
@@ -105,6 +122,7 @@ const AnalysisPage = () => {
         const res = await getLibraryVersions(library);
         setVersions(res.data.versions);
         setSnapshot(res.data.snapshot);
+        setLibraryInfo({ popular: res.data.popular, fewDependents: res.data.fewDependents });
         setNotListed(res.data.notListed || 0);
         // Only analyzed versions can be opened: show them alone when there are some
         if (firstLoad) setShowAll(!res.data.versions.some((v) => v.analyzed));
@@ -126,17 +144,20 @@ const AnalysisPage = () => {
       .catch(() => setAnalyzeConfig({ enabled: false }));
   }, []);
 
-  // Analysis runs of this library, polled while one is requested, queued or running or
-  // the backend is reloading the results. The version list is fetched again when a run
-  // has succeeded or a reload has finished, so the version turns green.
+  // Analysis runs of this library, polled while one is requested, queued or running, while
+  // a finished run's results are not loaded yet, or while the backend is reloading the results.
+  // The version list is fetched again when a run has succeeded, its results are loaded or a
+  // reload has finished, so the version turns green without a page refresh.
   useEffect(() => {
     if (!library || !library.includes(":")) return;
     let timer = null;
     let stopped = false;
+    let failures = 0;
     const poll = async () => {
       try {
         const res = await getAnalyzeStatus(library);
         if (stopped) return;
+        failures = 0;
         const next = { ...res.data.versions };
         // Analyses started from this page stay "requested" until GitHub lists their run
         for (const [version, at] of Object.entries(localRequests.current)) {
@@ -144,17 +165,22 @@ const AnalysisPage = () => {
         }
         const succeeded = Object.entries(next).some(([version, run]) =>
           run.state === "success" && previousRuns.current[version]?.state !== "success");
+        const loaded = Object.entries(next).some(([version, run]) =>
+          run.loaded && previousRuns.current[version]?.loaded === false);
         const reloaded = previousReloading.current && !res.data.reloading;
         previousRuns.current = next;
         previousReloading.current = res.data.reloading;
         setRuns(next);
         setResultsReloading(res.data.reloading);
-        if ((succeeded && previousPolled.current) || reloaded) setVersionsLoads((n) => n + 1);
+        if ((succeeded && previousPolled.current) || loaded || reloaded) setVersionsLoads((n) => n + 1);
         previousPolled.current = true;
-        const waiting = res.data.reloading || Object.values(next).some((run) => ACTIVE_STATES.includes(run.state));
+        const waiting = res.data.reloading || Object.values(next).some((run) =>
+          ACTIVE_STATES.includes(run.state) || waitingForResults(run));
         if (waiting) timer = setTimeout(poll, POLL_MS);
       } catch (err) {
-        // Progress is shown again on the next poll or page load
+        // A failed request is tried again, so a short network or GitHub problem does not stop the updates
+        failures += 1;
+        if (!stopped && failures < MAX_POLL_FAILURES) timer = setTimeout(poll, POLL_MS);
       }
     };
     poll();
@@ -231,6 +257,11 @@ const AnalysisPage = () => {
               <p className="text-xl text-gray-700">
                 Library: <span className="font-semibold text-blue-600">{library}</span>
               </p>
+              {libraryInfo?.fewDependents && (
+                <p className="mt-1 text-sm">
+                  <FewDependentsBadge popular={libraryInfo.popular} />
+                </p>
+              )}
             </div>
 
             <div className="bg-white shadow-2xl rounded-2xl p-8 border border-gray-200">
@@ -288,6 +319,20 @@ const AnalysisPage = () => {
                         All versions ({versions.length.toLocaleString()})
                       </button>
                     </div>
+                    <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                      <button
+                        onClick={() => setSortBy("use")}
+                        className={`px-3 py-2 ${sortBy === "use" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        Most used first
+                      </button>
+                      <button
+                        onClick={() => setSortBy("newest")}
+                        className={`px-3 py-2 border-l border-gray-300 ${sortBy === "newest" ? "bg-blue-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
+                      >
+                        Newest first
+                      </button>
+                    </div>
                     {versions.length > 20 && (
                       <input
                         type="text"
@@ -314,8 +359,8 @@ const AnalysisPage = () => {
                     <p className="text-gray-500 text-center py-8">No version matches "{versionFilter}".</p>
                   )}
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 max-h-[500px] overflow-y-auto p-2">
-                    {shown.map((v) => v.analyzed ? (
+                  {(() => {
+                  const card = (v) => v.analyzed ? (
                       <button
                         key={v.version}
                         onClick={() => handleVersionSelect(v.version)}
@@ -403,8 +448,33 @@ const AnalysisPage = () => {
                           )}
                         </div>
                       );
-                    })())}
-                  </div>
+                    })();
+                  const grid = (list) => (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                      {list.map(card)}
+                    </div>
+                  );
+                  // Newest first is the order the backend sends
+                  if (sortBy === "newest") {
+                    return <div className="max-h-[500px] overflow-y-auto p-2">{grid(shown)}</div>;
+                  }
+                  const byUse = (a, b) => (Number(b.dependents) || 0) - (Number(a.dependents) || 0);
+                  return (
+                    <div className="max-h-[500px] overflow-y-auto p-2 space-y-6">
+                      {USAGE_GROUPS.map(([usage, title]) => {
+                        const list = shown.filter((v) => (v.usage || "rare") === usage).sort(byUse);
+                        return list.length > 0 && (
+                          <section key={usage}>
+                            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                              {title} ({list.length.toLocaleString()})
+                            </h3>
+                            {grid(list)}
+                          </section>
+                        );
+                      })}
+                    </div>
+                  );
+                  })()}
                 </div>
                 );
               })()}

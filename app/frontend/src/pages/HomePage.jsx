@@ -4,6 +4,7 @@
 // import { searchLibraries } from "../services/api";
 // import Header from "../components/Header";
 // import { useLibrary } from "../context/LibraryContext";
+import FewDependentsBadge from "../components/FewDependentsBadge";
 // import "../index.css";
 
 // const HomePage = () => {
@@ -351,6 +352,9 @@ const HomePage = () => {
                                 : lib.mavenVersions
                                   ? "Too new, no project in our data uses it yet"
                                   : "Not in our data"}
+                              {lib.fewDependents && (
+                                <> · <FewDependentsBadge popular={lib.popular} /></>
+                              )}
                             </span>
                           </span>
                           <StatusBadge analyzedVersions={lib.analyzedVersions} />

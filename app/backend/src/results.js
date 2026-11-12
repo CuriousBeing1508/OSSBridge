@@ -19,7 +19,7 @@
 //   api_methods  methods and constructors with their coverage, grouped by signature into one API per name
 //
 // Tables from the dependents index. Without them the app lists only the analyzed versions.
-//   index_libraries  library_ga, versions, dependents, reach
+//   index_libraries  library_ga, versions, dependents, reach, popular
 //   index_versions   library_ga, library_version, dependents
 
 const fs = require("fs");
@@ -110,6 +110,8 @@ async function buildIndex(gen) {
   const name = `index_${gen}`;
   await admin.run(`ATTACH ${quoted(path.join(DATA_DIR, `index-${gen}.duckdb`))} AS ${name}`);
   await admin.run(`CREATE TABLE ${name}.index_libraries AS SELECT * FROM read_parquet(${quoted(libraries)})`);
+  // An index built before the popular column existed has no popular counts
+  await admin.run(`ALTER TABLE ${name}.index_libraries ADD COLUMN IF NOT EXISTS popular BIGINT`);
   await admin.run(`CREATE TABLE ${name}.index_versions AS SELECT * FROM read_parquet(${quoted(versions)})`);
   await admin.run(`CHECKPOINT ${name}`);
   let snapshot = null;
@@ -175,7 +177,7 @@ async function buildResults(gen, indexName) {
     await con.run(`CREATE VIEW index_libraries AS SELECT * FROM ${indexName}.index_libraries`);
     await con.run(`CREATE VIEW index_versions AS SELECT * FROM ${indexName}.index_versions`);
   } else {
-    await con.run("CREATE TABLE index_libraries (library_ga VARCHAR, versions BIGINT, dependents BIGINT, reach BIGINT)");
+    await con.run("CREATE TABLE index_libraries (library_ga VARCHAR, versions BIGINT, dependents BIGINT, reach BIGINT, popular BIGINT)");
     await con.run("CREATE TABLE index_versions (library_ga VARCHAR, library_version VARCHAR, dependents BIGINT)");
   }
   await con.run("CHECKPOINT");

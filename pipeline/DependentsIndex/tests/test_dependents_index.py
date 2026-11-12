@@ -97,8 +97,9 @@ def test_summaries_count_projects_outside_test_scope(index):
     assert versions == [("com.acme:core", "1.1", 2), ("com.acme:core", "1.2", 1),
                         (LIB, "1.0", 4), (LIB, "2.0", 1)]
     libraries = duckdb.sql(f"SELECT * FROM '{out}/libraries.parquet'").fetchall()
-    # reach counts every dependent, test scope and version ranges included
-    assert libraries == [("com.acme:core", 2, 2, 2), (LIB, 2, 4, 6)]
+    # reach counts every dependent, test scope and version ranges included.
+    # popular counts the dependents with reach > 0, here only com.acme:core.
+    assert libraries == [("com.acme:core", 2, 2, 2, 0), (LIB, 2, 4, 6, 1)]
 
 
 def test_load_dependents_filters_test_scope_and_collapses(index):

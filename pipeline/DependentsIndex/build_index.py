@@ -27,9 +27,10 @@ OUTPUT (in the index directory):
                     Versions as dependents declared them that are not releases
                     (ranges such as [1.0,2), RELEASE, ${...}, -SNAPSHOT) are
                     left out of both summaries
-    libraries.parquet library_ga, versions, dependents, reach -- one row per
+    libraries.parquet library_ga, versions, dependents, reach, popular -- one row per
                     library (both summaries include the added libraries; the
-                    app lists libraries and versions from them)
+                    app lists libraries and versions from them). popular counts
+                    the dependents that other projects depend on (reach > 0)
     manifest.json   source, build time, row counts, added libraries
 
 SOURCES:
@@ -254,12 +255,15 @@ def write_summaries(index_dir):
     """)
     reach = (f"(SELECT ga, max(reach) AS reach FROM read_parquet([{', '.join(reach_files)}]) GROUP BY ga)"
              if reach_files else "(SELECT NULL::VARCHAR AS ga, NULL::BIGINT AS reach WHERE FALSE)")
+    # A popular dependent is one that at least one other project depends on (reach > 0)
     con.execute(f"""
         COPY (
             SELECT e.library_ga, count(DISTINCT e.library_version) AS versions,
                    count(DISTINCT e.dependent_ga) FILTER (WHERE {non_test}) AS dependents,
-                   coalesce(any_value(r.reach), 0) AS reach
+                   coalesce(any_value(r.reach), 0) AS reach,
+                   count(DISTINCT e.dependent_ga) FILTER (WHERE {non_test} AND d.reach > 0) AS popular
             FROM edges e LEFT JOIN {reach} r ON r.ga = e.library_ga
+                         LEFT JOIN {reach} d ON d.ga = e.dependent_ga
             GROUP BY e.library_ga ORDER BY e.library_ga
         ) TO '{index_dir / "libraries.parquet"}' (FORMAT parquet)
     """)

@@ -4,6 +4,10 @@ const { GA, mavenReleases } = require("../mavenCentral");
 
 const router = express.Router();
 
+// A library with fewer popular dependents than this is marked "Few dependents". A popular
+// dependent is a project that other projects depend on. The paper uses the same threshold.
+const MIN_POPULAR = 50;
+
 // Where the result tables are read from, and when they were loaded
 // http://localhost:5050/api/dependencies/test-dataset
 router.get("/test-dataset", async (req, res) => {
@@ -21,7 +25,9 @@ const ALL_LIBRARIES = `
   SELECT coalesce(i.library_ga, a.library_ga) AS library,
          coalesce(a.analyzed, 0) AS "analyzedVersions",
          coalesce(i.versions, 0) AS "indexVersions",
-         i.dependents, i.library_ga IS NOT NULL AS "inIndex"
+         i.dependents, i.popular,
+         coalesce(i.popular < ${MIN_POPULAR}, false) AS "fewDependents",
+         i.library_ga IS NOT NULL AS "inIndex"
   FROM index_libraries i
   FULL JOIN (SELECT library_ga, count(*) AS analyzed FROM library_versions GROUP BY 1) a
     USING (library_ga)`;
@@ -58,6 +64,19 @@ router.get("/search", async (req, res) => {
   }
 });
 
+// Groups the versions of one library by their number of dependents, compared with each other.
+// The top 10 percent are "most", down to the median "moderate", and the bottom half "rare".
+// Versions with the same number of dependents share a group.
+function markUsage(versions) {
+  const counts = versions.map((v) => Number(v.dependents) || 0).sort((a, b) => b - a);
+  const last = Math.max(counts.length - 1, 1);
+  for (const v of versions) {
+    const rank = counts.indexOf(Number(v.dependents) || 0);
+    const percentile = rank / last;
+    v.usage = rank === 0 || percentile < 0.1 ? "most" : percentile < 0.5 ? "moderate" : "rare";
+  }
+}
+
 // The versions of a library in the dependents index, plus the analyzed ones, newest
 // first, each with its number of dependent projects and marked analyzed or not.
 // Versions dependents declared that are not releases on Maven Central
@@ -70,13 +89,13 @@ router.get("/library", async (req, res) => {
     if (!library) return res.status(400).json({ error: "Library required" });
 
     let [match] = await results.query(`
-      SELECT library FROM (${ALL_LIBRARIES})
+      SELECT library, popular, "fewDependents" FROM (${ALL_LIBRARIES})
       WHERE library = $library OR split_part(library, ':', 2) = $library
       ORDER BY library = $library DESC, "analyzedVersions" DESC, dependents DESC NULLS LAST
       LIMIT 1`, { library });
     const { available, snapshot } = results.index();
     if (!match && GA.test(library) && (await mavenReleases(library))?.length) {
-      match = { library };
+      match = { library, popular: null, fewDependents: false };
     }
     if (!match) {
       return res.status(404).json({
@@ -109,8 +128,11 @@ router.get("/library", async (req, res) => {
       notListed = releases.filter((v) => !known.has(v)).length;
     }
     versions.sort((x, y) => results.compareVersions(y.version, x.version));
+    markUsage(versions);
     res.json({
       library: match.library,
+      popular: match.popular,
+      fewDependents: match.fewDependents,
       indexAvailable: available,
       snapshot,
       mavenCentral: Boolean(releases && releases.length),
