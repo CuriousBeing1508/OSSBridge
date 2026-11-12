@@ -284,3 +284,39 @@ def test_a_library_without_a_repository_gets_a_plain_reason(tmp_path, monkeypatc
     assert summary["status"] == "no_repository"
     assert summary["reason"].startswith("The library's POM on Maven Central does not link to a GitHub")
     assert json.loads(ws.coverage_json.read_text())["status"] == "no_repository"
+
+
+LOOKUP = """# comment
+library,repository,tag,reason
+commons-lang:commons-lang,apache/commons-lang,LANG_{version_},
+org.example:no-source,,,Its source code is not public.
+"""
+
+
+def test_source_lookup_gives_the_repository_and_tag_pattern(tmp_path, monkeypatch):
+    lookup = tmp_path / "lookup.csv"
+    lookup.write_text(LOOKUP)
+    monkeypatch.setattr(coverage, "LOOKUP_FILE", lookup)
+    monkeypatch.setattr(coverage, "scm_with_parents", lambda *args: (None, None))
+    monkeypatch.setattr(coverage, "remote_tags", lambda repo: {"LANG_2_5", "LANG_2_6"})
+
+    assert coverage.source_lookup("org.example:other") == {}
+    assert coverage.resolve_source("commons-lang:commons-lang", "2.6") == ("apache/commons-lang", "LANG_2_6")
+    with pytest.raises(coverage.CoverageError):
+        coverage.resolve_source("org.example:no-source", "1.0")
+
+
+def test_source_lookup_reason_replaces_the_general_reason(tmp_path, monkeypatch):
+    lookup = tmp_path / "lookup.csv"
+    lookup.write_text(LOOKUP)
+    monkeypatch.setattr(coverage, "LOOKUP_FILE", lookup)
+
+    assert coverage.reason({"library": "org.example:no-source", "status": "no_repository"}) == \
+        "Its source code is not public."
+    assert coverage.reason({"library": "org.example:no-source", "status": "ok"}) is None
+    assert coverage.reason({"library": "commons-lang:commons-lang", "status": "no_tag"}).startswith("We found")
+
+
+def test_source_lookup_file_is_valid():
+    lookup = coverage.source_lookup("log4j:log4j")
+    assert lookup["repository"] == "apache/logging-log4j1"

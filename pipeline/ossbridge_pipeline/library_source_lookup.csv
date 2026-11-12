@@ -1,0 +1,23 @@
+# Libraries whose source the coverage step (step 5) cannot find from the POM alone.
+# Add a row when a library's POM has no GitHub link, links to a moved repository,
+# or uses release tags that the usual patterns miss.
+#
+# library     group:artifact
+# repository  GitHub owner/name. It is used instead of the POM's link
+# tag         Release tag pattern, tried before the usual ones. {version} is the version
+#             and {version_} is the version with _ instead of dots, so LANG_{version_} gives LANG_2_6
+# reason      A plain sentence the app shows when there is no coverage. It replaces the general reason
+#
+# Leave a column empty when it is not needed.
+library,repository,tag,reason
+log4j:log4j,apache/logging-log4j1,,
+commons-io:commons-io,apache/commons-io,,
+commons-lang:commons-lang,apache/commons-lang,LANG_{version_},
+commons-logging:commons-logging,apache/commons-logging,LOGGING_{version_},
+ch.qos.logback:logback-classic,qos-ch/logback,,
+ch.qos.logback:logback-core,qos-ch/logback,,
+javax.servlet:javax.servlet-api,javaee/servlet-spec,,
+javax.servlet:servlet-api,,,This old release names no source repository in its POM. Its successor javax.servlet:javax.servlet-api has one.
+com.google.code.findbugs:jsr305,,,The library's POM links only to the FindBugs website on SourceForge and not to its source code.
+androidx.appcompat:appcompat,,,This Android library is built on Google's own source server with the Android SDK. We can only build libraries from GitHub with Maven or Gradle.
+org.osgi:org.osgi.core,,,The library's POM names no source repository. The OSGi repository on GitHub tags whole specification releases and not single versions of this library.

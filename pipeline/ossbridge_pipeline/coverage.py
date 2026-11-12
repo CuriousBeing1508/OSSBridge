@@ -11,6 +11,8 @@ writes a JaCoCo XML report, without changing the project's build files:
        release tag: the POM's <scm><tag> if set, else the first existing tag of
        rel/<artifact>-<v>, <artifact>-<v>, v<v>, <v>, release-<v>, <repo>-<v>
        (checked with git ls-remote; only exact matches, so -RC tags are not used).
+       library_source_lookup.csv gives the repository, a tag pattern and a reason
+       for libraries whose POM is not enough.
     2. Shallow clone of the tag; the module whose pom.xml declares the artifactId
        (Maven), or the build.gradle(.kts) project (Gradle).
     3. JDK: the lowest installed JDK that can build the Java release the POM asks
@@ -40,6 +42,7 @@ USAGE:
 """
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -69,6 +72,7 @@ TAG_PATTERNS = ["rel/{artifact}-{version}", "{artifact}-{version}", "v{version}"
 # A tag that only ends with the version must not be a pre-release of it
 PRE_RELEASE = re.compile(r"(?i)(rc|alpha|beta|milestone|snapshot|preview|m)\d*$")
 MAX_PARENT_DEPTH = 6
+LOOKUP_FILE = Path(__file__).with_name("library_source_lookup.csv")
 
 # Build checks unrelated to running the tests
 MAVEN_FLAGS = [
@@ -90,6 +94,19 @@ class CoverageError(Exception):
 
 
 # ---------------------------------------------------------------- source location
+
+def source_lookup(library_ga, path=None):
+    """The library's row of library_source_lookup.csv, or an empty dict."""
+    path = path or LOOKUP_FILE
+    if not path.exists():
+        return {}
+    with path.open(newline="") as f:
+        lines = [line for line in f if line.strip() and not line.startswith("#")]
+    for row in csv.DictReader(lines):
+        if (row.get("library") or "").strip() == library_ga:
+            return {key: (value or "").strip() for key, value in row.items()}
+    return {}
+
 
 def pom_url(library_ga, version, base_url=MAVEN_CENTRAL):
     group, artifact = library_ga.split(":", 1)
@@ -199,19 +216,27 @@ def choose_tag(tags, artifact, version, repo, pom_tag=None):
 
 
 def resolve_source(library_ga, version, repo=None, tag=None, base_url=MAVEN_CENTRAL):
-    """Return (owner/repo, tag); explicit repo/tag override what the POMs say."""
+    """Return (owner/repo, tag).
+
+    The repository comes from --repo, then library_source_lookup.csv, then the POMs.
+    """
+    lookup = source_lookup(library_ga)
     pom_repo, pom_tag = None, None
     if not repo or not tag:
         pom_repo, pom_tag = scm_with_parents(library_ga, version, base_url)
-    repo = repo or pom_repo
+    repo = repo or lookup.get("repository") or pom_repo
     if not repo:
         raise CoverageError("no_repository", "no GitHub repository in the POM's <scm> or its parents; "
-                                             "pass --repo owner/name")
+                                             "pass --repo owner/name or add it to library_source_lookup.csv")
     if tag:
         return repo, tag
     artifact = library_ga.split(":", 1)[1]
     tags = remote_tags(repo)
-    found = choose_tag(tags, artifact, version, repo, pom_tag)
+    found = None
+    if lookup.get("tag"):
+        own = lookup["tag"].format(version=version, version_=version.replace(".", "_"))
+        found = own if own in tags else None
+    found = found or choose_tag(tags, artifact, version, repo, pom_tag)
     # Flavors released from one tag, e.g. guava 33.2.1-jre and 33.2.1-android -> v33.2.1
     flavor = re.fullmatch(r"(.+?)-([A-Za-z]+\d*)", version)
     if not found and flavor and not PRE_RELEASE.fullmatch(flavor.group(2)):
@@ -435,6 +460,9 @@ def reason(summary, timeout=DEFAULT_TIMEOUT):
     status = summary.get("status")
     if status == "ok":
         return None
+    own_reason = source_lookup(summary.get("library") or "").get("reason")
+    if own_reason:
+        return own_reason
     if status not in REASONS:
         return OUR_PROBLEM
     jdks = list(dict.fromkeys(summary.get("jdks_tried") or []))
